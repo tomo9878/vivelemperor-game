@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Hex Grid Test — Vive l'Empereur</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #eee; }
+
+#viewport { width: 100vw; height: 100vh; overflow: hidden; position: relative; cursor: grab; }
+#viewport.panning { cursor: grabbing; }
+
+#map-container { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+#map-img { display: block; user-select: none; -webkit-user-drag: none; }
+#hex-svg { position: absolute; top: 0; left: 0; }
+
+/* ---- HUD ---- */
+#hud {
+  position: fixed; top: 12px; left: 12px; z-index: 20;
+  background: rgba(0,0,0,.75); border: 1px solid #444;
+  border-radius: 8px; padding: 12px 16px; font-size: 13px;
+  min-width: 200px; line-height: 1.8;
+}
+#hud .label { color: #888; font-size: 11px; }
+#hud .val   { color: #0f0; font-weight: bold; }
+#hud .dim   { color: #fff; }
+
+#legend {
+  position: fixed; bottom: 12px; left: 12px; z-index: 20;
+  background: rgba(0,0,0,.75); border: 1px solid #444;
+  border-radius: 8px; padding: 10px 14px; font-size: 12px;
+  line-height: 2;
+}
+.leg-item { display: flex; align-items: center; gap: 8px; }
+.leg-swatch { width: 20px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+
+#controls {
+  position: fixed; bottom: 12px; right: 12px; z-index: 20;
+  background: rgba(0,0,0,.75); border: 1px solid #444;
+  border-radius: 8px; padding: 10px 14px; font-size: 11px;
+  color: #aaa; line-height: 1.8; text-align: right;
+}
+
+/* ---- SVG hex states ---- */
+.hex-normal   { fill: none;                    stroke: #00cc66; stroke-width: 1.5; opacity: 0.35; }
+.hex-hover    { fill: rgba(255,255,255,0.08);  stroke: #fff;    stroke-width: 2;   opacity: 0.7; }
+.hex-selected { fill: rgba(255,210,0,0.25);    stroke: #ffd700; stroke-width: 2.5; opacity: 1; }
+.hex-adjacent { fill: rgba(0,180,255,0.25);    stroke: #00bbff; stroke-width: 2;   opacity: 1; }
+
+.hex-label { fill: #00cc66; font-size: 10px; opacity: 0.45; pointer-events: none; user-select: none; }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <div id="map-container">
+    <img id="map-img" src="images/vive-lempereur map v2.png" draggable="false">
+    <svg id="hex-svg"></svg>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div class="label">ズーム</div>
+  <div class="dim"><span id="zoom-val">40</span>%</div>
+  <div class="label">ホバー中</div>
+  <div class="val" id="hud-hover">—</div>
+  <div class="label">駒の位置</div>
+  <div class="val" id="hud-piece">—</div>
+  <div class="label">状態</div>
+  <div class="dim" id="hud-state">待機中</div>
+</div>
+
+<!-- Legend -->
+<div id="legend">
+  <div class="leg-item"><div class="leg-swatch" style="background:rgba(255,210,0,.5);border:1px solid #ffd700"></div>選択中の駒</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:rgba(0,180,255,.4);border:1px solid #00bbff"></div>移動可能ヘックス（隣接）</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:rgba(0,204,102,.15);border:1px solid #00cc66"></div>通常ヘックス</div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  スクロール: ズーム<br>
+  右ドラッグ / 中クリック: パン<br>
+  左クリック（駒）: 選択<br>
+  左クリック（青いヘックス）: 移動<br>
+  Escキー: 選択解除
+</div>
+
+<script src="hex-lib.js"></script>
+<script>
+// ============================================================
+// VLE グリッド設定（Vassalモジュールより実測）
+// ============================================================
+const GRID_DX   = 109.2;   // 列間隔(px)
+const GRID_DY   = 125.3;   // 行間隔(px)
+const GRID_X0   = -2;      // 原点X（col_idx=0の中心）
+const GRID_Y0   = -14;     // 原点Y（col_idx=0,row_idx=0の中心）
+const GRID_COLS = 20;      // 総列数（ラベル1〜20）
+const GRID_ROWS = 16;      // 総行数（ラベル1〜16）
+
+const layout = new FlatTopLayout({
+  dx: GRID_DX, dy: GRID_DY, x0: GRID_X0, y0: GRID_Y0,
+});
+
+// ラベル(1-indexed) ↔ 内部インデックス(0-indexed) 変換
+const toIdx  = (label) => label - 1;
+const toLabel = (idx)  => idx + 1;
+
+// ヘックスアドレス文字列 "CCRRR" ex: "0409"
+function hexAddr(colLabel, rowLabel) {
+  return String(colLabel).padStart(2, '0') + String(rowLabel).padStart(2, '0');
+}
+
+// Cube座標 → 1-indexed label offset
+function cubeToLabel(hex) {
+  const off = layout.cubeToOffset(hex);
+  return { col: toLabel(off.col), row: toLabel(off.row) };
+}
+
+// 1-indexed label → Cube座標
+function labelToCube(colLabel, rowLabel) {
+  return layout.offsetToCube(toIdx(colLabel), toIdx(rowLabel));
+}
+
+// 範囲内チェック
+function inBounds(colLabel, rowLabel) {
+  return colLabel >= 1 && colLabel <= GRID_COLS &&
+         rowLabel >= 1 && rowLabel <= GRID_ROWS;
+}
+
+// ============================================================
+// ゲーム状態
+// ============================================================
+let piece = { col: 10, row: 8 };   // 駒位置（1-indexed label）
+let selected = false;               // 選択中フラグ
+let adjacentSet = new Set();        // 移動可能ヘックスのアドレスSet
+
+// ============================================================
+// SVG管理
+// ============================================================
+const svg = document.getElementById('hex-svg');
+const mapImg = document.getElementById('map-img');
+
+// hexEls: addr → { poly }  ← createHexGrid が返す Map をそのまま使う
+let hexEls = new Map();
+let pieceEl = null;
+
+function setupSVG(W, H) {
+  svg.setAttribute('width',   W);
+  svg.setAttribute('height',  H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  // ヘックスグリッド描画はライブラリに委譲
+  hexEls = createHexGrid(svg, layout, {
+    cols:       GRID_COLS,
+    rows:       GRID_ROWS,
+    polyClass:  'hex-normal',
+    labelClass: 'hex-label',
+    groupId:    'hex-grid',
+  });
+
+  svg.addEventListener('mousemove',  onMouseMove);
+  svg.addEventListener('click',      onMouseClick);
+  svg.addEventListener('mouseleave', () => {
+    document.getElementById('hud-hover').textContent = '—';
+  });
+}
+
+// ============================================================
+// 座標変換（ビューポート → マップピクセル）
+// ============================================================
+function viewportToMap(clientX, clientY) {
+  // SVGはcontainerの中に position:absolute で置かれているので
+  // getScreenCTM().inverse() で一発変換できる
+  const pt = svg.createSVGPoint();
+  pt.x = clientX; pt.y = clientY;
+  const inv = svg.getScreenCTM().inverse();
+  const { x, y } = pt.matrixTransform(inv);
+  return { x, y };
+}
+
+function getHexAt(clientX, clientY) {
+  const { x, y } = viewportToMap(clientX, clientY);
+  const cube = layout.pixelToHex(x, y);
+  const { col, row } = cubeToLabel(cube);
+  if (!inBounds(col, row)) return null;
+  return { col, row, addr: hexAddr(col, row) };
+}
+
+// ============================================================
+// イベントハンドラ
+// ============================================================
+let lastHoverAddr = null;
+
+function onMouseMove(e) {
+  const h = getHexAt(e.clientX, e.clientY);
+  const addr = h?.addr ?? null;
+  document.getElementById('hud-hover').textContent = addr ?? '—';
+
+  if (addr !== lastHoverAddr) {
+    // ホバースタイルは選択・隣接に上書きしない
+    if (lastHoverAddr && !isHighlighted(lastHoverAddr)) {
+      setHexClass(lastHoverAddr, 'hex-normal');
+    }
+    if (addr && !isHighlighted(addr)) {
+      setHexClass(addr, 'hex-hover');
+    }
+    lastHoverAddr = addr;
+  }
+}
+
+function isHighlighted(addr) {
+  const pieceAddr = hexAddr(piece.col, piece.row);
+  return addr === pieceAddr || adjacentSet.has(addr);
+}
+
+function onMouseClick(e) {
+  if (e.button !== 0) return;
+  const h = getHexAt(e.clientX, e.clientY);
+  if (!h) return;
+
+  const pieceAddr = hexAddr(piece.col, piece.row);
+
+  if (!selected) {
+    if (h.addr === pieceAddr) {
+      // 駒を選択
+      selected = true;
+      computeAdjacent();
+      refreshHighlights();
+      setHudState('選択中 — 青いヘックスをクリックして移動');
+    }
+  } else {
+    if (adjacentSet.has(h.addr)) {
+      // 移動
+      movePiece(h.col, h.row);
+    } else if (h.addr === pieceAddr) {
+      // 選択解除
+      deselect();
+    } else {
+      // 他のヘックスをクリック → 選択解除
+      deselect();
+    }
+  }
+}
+
+function deselect() {
+  selected = false;
+  adjacentSet.clear();
+  refreshHighlights();
+  setHudState('待機中');
+}
+
+function computeAdjacent() {
+  adjacentSet.clear();
+  const cube = labelToCube(piece.col, piece.row);
+  for (const n of layout.neighbors(cube)) {
+    const { col, row } = cubeToLabel(n);
+    if (inBounds(col, row)) {
+      adjacentSet.add(hexAddr(col, row));
+    }
+  }
+}
+
+function refreshHighlights() {
+  const pieceAddr = hexAddr(piece.col, piece.row);
+  for (const addr of hexEls.keys()) {
+    if (selected && addr === pieceAddr) {
+      setHexClass(addr, 'hex-selected');
+    } else if (selected && adjacentSet.has(addr)) {
+      setHexClass(addr, 'hex-adjacent');
+    } else {
+      setHexClass(addr, addr === lastHoverAddr ? 'hex-hover' : 'hex-normal');
+    }
+  }
+}
+
+function setHexClass(addr, cls) {
+  const poly = hexEls.get(addr);
+  if (poly) poly.setAttribute('class', cls);
+}
+
+function setHudState(msg) {
+  document.getElementById('hud-state').textContent = msg;
+}
+
+// ============================================================
+// 駒描画
+// ============================================================
+function drawPiece() {
+  if (pieceEl) pieceEl.remove();
+
+  const col = toIdx(piece.col), row = toIdx(piece.row);
+  const { x, y } = layout.hexToPixel(col, row);
+  const addr = hexAddr(piece.col, piece.row);
+
+  const g = makeSVGEl('g', { id: 'piece', 'pointer-events': 'none' });
+
+  // 駒画像（80x80px → ヘックスに収まる64x64で表示）
+  const IW = 64, IH = 64;
+  const img = makeSVGEl('image', {
+    href: 'images/1_braun_IV_back.png',
+    x: x - IW / 2, y: y - IH / 2,
+    width: IW, height: IH,
+  });
+
+  // 選択インジケーター（選択時に輝く外枠）
+  const glow = makeSVGEl('rect', {
+    x: x - IW / 2 - 3, y: y - IH / 2 - 3,
+    width: IW + 6, height: IH + 6,
+    fill: 'none',
+    stroke: selected ? '#ffd700' : 'none',
+    'stroke-width': '2.5', rx: '6',
+  });
+
+  g.appendChild(glow);
+  g.appendChild(img);
+  svg.appendChild(g);
+  pieceEl = g;
+
+  document.getElementById('hud-piece').textContent = addr;
+}
+
+function movePiece(col, row) {
+  piece = { col, row };
+  selected = false;
+  adjacentSet.clear();
+  refreshHighlights();
+  drawPiece();
+  setHudState('待機中');
+}
+
+// ============================================================
+// パン＆ズーム
+// ============================================================
+const container = document.getElementById('map-container');
+const viewport  = document.getElementById('viewport');
+
+let zoom   = 0.38;
+let panX   = 0, panY = 0;
+let isPanning = false;
+let dragStart = null;
+let hasDragged = false;
+
+function applyTransform() {
+  container.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  document.getElementById('zoom-val').textContent = Math.round(zoom * 100);
+}
+
+// ズーム（マウス位置を中心に）
+viewport.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const oldZoom = zoom;
+  zoom = Math.min(Math.max(zoom * factor, 0.1), 4);
+  const k = zoom / oldZoom;
+  panX = e.clientX - k * (e.clientX - panX);
+  panY = e.clientY - k * (e.clientY - panY);
+  applyTransform();
+}, { passive: false });
+
+// パン（右ドラッグ or 中ボタン）
+viewport.addEventListener('mousedown', e => {
+  if (e.button === 1 || e.button === 2) {
+    isPanning = true;
+    hasDragged = false;
+    dragStart = { x: e.clientX - panX, y: e.clientY - panY };
+    viewport.classList.add('panning');
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('mousemove', e => {
+  if (!isPanning) return;
+  const dx = Math.abs(e.clientX - (dragStart.x + panX));
+  const dy = Math.abs(e.clientY - (dragStart.y + panY));
+  if (dx > 3 || dy > 3) hasDragged = true;
+  panX = e.clientX - dragStart.x;
+  panY = e.clientY - dragStart.y;
+  applyTransform();
+});
+
+window.addEventListener('mouseup', () => {
+  isPanning = false;
+  viewport.classList.remove('panning');
+});
+
+// 右クリックメニュー抑制
+viewport.addEventListener('contextmenu', e => e.preventDefault());
+
+// Escで選択解除
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && selected) deselect();
+});
+
+// ============================================================
+// 初期化
+// ============================================================
+function init() {
+  const W = mapImg.naturalWidth, H = mapImg.naturalHeight;
+  setupSVG(W, H);
+  drawPiece();
+
+  // 初期パン: マップ中央が画面中央に来るように
+  panX = (window.innerWidth  - W * zoom) / 2;
+  panY = (window.innerHeight - H * zoom) / 2;
+  applyTransform();
+}
+
+if (mapImg.complete && mapImg.naturalWidth > 0) {
+  init();
+} else {
+  mapImg.addEventListener('load', init);
+}
+</script>
+</body>
+</html>

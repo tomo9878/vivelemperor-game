@@ -224,6 +224,23 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 #terrain-legend.visible { display: block; }
 .tl-item { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
 .tl-swatch { width: 16px; height: 10px; border-radius: 2px; flex-shrink: 0; border: 1px solid rgba(255,255,255,.15); }
+
+/* Terrain edit checkboxes */
+#terrain-edit-panel { display: none; margin-top: 8px; }
+#terrain-hex-label { font-size: 11px; color: #ffd700; margin-bottom: 6px; }
+.tt-check-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #ccc; padding: 3px 0; cursor: pointer;
+  user-select: none;
+}
+.tt-check-row input[type=checkbox] { cursor: pointer; accent-color: #f90; }
+.tc-swatch { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; border: 1px solid rgba(255,255,255,.15); }
+
+/* River hexsides */
+.btn-river-on  { background: #001a4a; border-color: #4499ff; color: #4499ff; }
+.river-line    { stroke: #4499ff; stroke-width: 4; stroke-linecap: round; pointer-events: none; opacity: 0.85; }
+.river-bridge  { stroke: #44ddff; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 3; pointer-events: none; opacity: 0.85; }
+.river-hover   { stroke: #88ccff; stroke-width: 5; stroke-linecap: round; pointer-events: none; opacity: 0.65; stroke-dasharray: 8 4; }
 </style>
 </head>
 <body>
@@ -275,12 +292,32 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
       <input type="file" id="terrain-import-input" accept=".json" style="display:none">
     </label>
   </div>
-  <div id="terrain-legend">
-    <div class="tl-item"><div class="tl-swatch" style="background:rgba(200,160,80,.55)"></div>Ridge</div>
-    <div class="tl-item"><div class="tl-swatch" style="background:rgba(30,110,30,.55)"></div>Woods</div>
-    <div class="tl-item"><div class="tl-swatch" style="background:rgba(160,140,110,.55)"></div>Buildings</div>
-    <div class="tl-item"><div class="tl-swatch" style="background:rgba(100,80,70,.65)"></div>Walled Bldgs</div>
-    <div class="tl-item"><div class="tl-swatch" style="background:none"></div>Flat（消去）</div>
+  <hr style="border:none;border-top:1px solid #333;margin:6px 0">
+  <button id="btn-river-toggle" class="btn btn-neutral" style="width:100%">河川設定 OFF</button>
+  <div id="river-edit-panel" style="display:none;margin-top:6px">
+    <div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">河川ヘックスサイド</div>
+    <div id="river-hex-label" style="font-size:11px;color:#4499ff;margin-bottom:2px">— ヘックスサイド未選択 —</div>
+    <div style="font-size:10px;color:#666">クリックでトグル</div>
+  </div>
+
+  <div id="terrain-edit-panel">
+    <div id="terrain-hex-label">— ヘックス未選択 —</div>
+    <label class="tt-check-row">
+      <input type="checkbox" id="tc-ridge">
+      <span class="tc-swatch" style="background:rgba(200,160,80,.55)"></span>Ridge
+    </label>
+    <label class="tt-check-row">
+      <input type="checkbox" id="tc-woods">
+      <span class="tc-swatch" style="background:rgba(30,110,30,.55)"></span>Woods
+    </label>
+    <label class="tt-check-row">
+      <input type="checkbox" id="tc-buildings">
+      <span class="tc-swatch" style="background:rgba(160,140,110,.55)"></span>Buildings
+    </label>
+    <label class="tt-check-row">
+      <input type="checkbox" id="tc-walled_buildings">
+      <span class="tc-swatch" style="background:rgba(100,80,70,.65)"></span>Walled Bldgs
+    </label>
   </div>
 </div>
 
@@ -432,30 +469,50 @@ const TERRAIN_JP = {
   walled_buildings: 'Walled Buildings',
 };
 
-const terrainData    = new Map();   // addr → terrain type（'flat'は省略）
+const terrainData    = new Map();   // addr → string[]（地形タイプ配列、空=flat）
 const terrainFillEls = new Map();   // addr → SVGPolygonElement（地形塗りレイヤー）
 let terrainEditMode  = false;
+let terrainEditAddr  = null;        // チェックボックスで編集中のヘックス
 
-function getTerrain(addr) {
-  return terrainData.get(addr) || 'flat';
+const TERRAIN_PRIORITY = ['walled_buildings', 'buildings', 'woods', 'ridge'];
+
+function getTerrainTypes(addr) {
+  return terrainData.get(addr) || [];
 }
 
-function setTerrain(addr, type) {
-  if (type === 'flat') {
+function isRidge(addr)    { return getTerrainTypes(addr).includes('ridge'); }
+function isWoods(addr)    { return getTerrainTypes(addr).includes('woods'); }
+function isBuildings(addr){ const t = getTerrainTypes(addr); return t.includes('buildings') || t.includes('walled_buildings'); }
+function isDifficultTerrain(addr) { return isWoods(addr) || isBuildings(addr); }
+
+function getDisplayColor(addr) {
+  const types = getTerrainTypes(addr);
+  for (const t of TERRAIN_PRIORITY) {
+    if (types.includes(t)) return TERRAIN_COLORS[t];
+  }
+  return null;
+}
+
+function updateTerrainFill(addr) {
+  const fillEl = terrainFillEls.get(addr);
+  if (fillEl) fillEl.setAttribute('fill', getDisplayColor(addr) || 'none');
+}
+
+function setTerrainTypes(addr, types) {
+  const filtered = (types || []).filter(t => t !== 'flat');
+  if (filtered.length === 0) {
     terrainData.delete(addr);
   } else {
-    terrainData.set(addr, type);
+    terrainData.set(addr, filtered);
   }
-  const fillEl = terrainFillEls.get(addr);
-  if (fillEl) fillEl.setAttribute('fill', TERRAIN_COLORS[type] || 'none');
+  updateTerrainFill(addr);
 }
 
-function cycleTerrain(addr) {
-  const current = getTerrain(addr);
-  const idx = TERRAIN_TYPES.indexOf(current);
-  const next = TERRAIN_TYPES[(idx + 1) % TERRAIN_TYPES.length];
-  setTerrain(addr, next);
-  return next;
+function toggleTerrainType(addr, type) {
+  const current = getTerrainTypes(addr);
+  const idx = current.indexOf(type);
+  const next = idx >= 0 ? current.filter(t => t !== type) : [...current, type];
+  setTerrainTypes(addr, next);
 }
 
 function setupTerrainLayer() {
@@ -477,8 +534,13 @@ function setupTerrainLayer() {
 
 function exportTerrainJSON() {
   const obj = {};
-  for (const [addr, type] of terrainData) obj[addr] = type;
-  const json = JSON.stringify({ version: 1, terrain: obj }, null, 2);
+  for (const [addr, types] of terrainData) obj[addr] = types;
+  const json = JSON.stringify({
+    version: 2,
+    terrain: obj,
+    rivers:  riverHexsides,
+    bridges: bridgeHexsides,
+  }, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -491,13 +553,19 @@ function importTerrainJSON(text) {
     const data = JSON.parse(text);
     const terrain = data.terrain || data;
     // クリア
-    for (const addr of terrainFillEls.keys()) setTerrain(addr, 'flat');
-    // 適用
-    for (const [addr, type] of Object.entries(terrain)) {
-      if (TERRAIN_TYPES.includes(type) && terrainFillEls.has(addr)) {
-        setTerrain(addr, type);
+    for (const addr of terrainFillEls.keys()) setTerrainTypes(addr, []);
+    // 適用（新形式: 配列、旧形式: 文字列 の両方に対応）
+    for (const [addr, val] of Object.entries(terrain)) {
+      const types = Array.isArray(val) ? val : [val];
+      const valid = types.filter(t => TERRAIN_TYPES.includes(t) && t !== 'flat');
+      if (valid.length > 0 && terrainFillEls.has(addr)) {
+        setTerrainTypes(addr, valid);
       }
     }
+    // 河川データ（v2形式）
+    if (Array.isArray(data.rivers))  riverHexsides  = data.rivers.filter(r => r.from && r.to);
+    if (Array.isArray(data.bridges)) bridgeHexsides = data.bridges.filter(r => r.from && r.to);
+    renderRiverLayer();
     return true;
   } catch (err) {
     alert('JSON読み込みエラー: ' + err.message);
@@ -535,7 +603,7 @@ function neighborAddrs(addr) {
  * @returns {boolean}
  */
 function isUphill(fromAddr, toAddr) {
-  return getTerrain(fromAddr) === 'flat' && getTerrain(toAddr) === 'ridge';
+  return !isRidge(fromAddr) && isRidge(toAddr);
 }
 
 /**
@@ -559,23 +627,25 @@ function getMoveCost(fromAddr, toAddr) {
  * @returns {boolean}
  */
 function isRidgeBlocking(addr) {
-  if (getTerrain(addr) !== 'ridge') return false;
-  return neighborAddrs(addr).some(n => getTerrain(n) === 'flat');
+  if (!isRidge(addr)) return false;
+  return neighborAddrs(addr).some(n => !isRidge(n));
 }
 
 // ============================================================
 // ゲームデータ — 河川・道路
 // ============================================================
-// 河川ヘックスサイド: "ADDR1|ADDR2" 形式（辞書順で正規化）
-// 例: riverHexsides.add('0508|0608')
-const riverHexsides = new Set();
+// 河川ヘックスサイド: { from, to } オブジェクト配列（from < to で正規化）
+let riverHexsides  = [];   // 通行不可の河川ヘックスサイド
+let bridgeHexsides = [];   // 橋・道路で通行可のヘックスサイド
 
-// 道路ヘックス: road hex のアドレス集合
-// 例: roadHexes.add('0102')
+// 道路ヘックス（難地形ペナルティ回避）
 const roadHexes = new Set();
 
-// プロイセン展開フラグ（19xx/20xx制限に使用）
+// プロイセン展開フラグ（19xx/20xx制限）
 let prussianDeployed = false;
+
+// 河川編集モード
+let riverEditMode = false;
 
 // ============================================================
 // ゲーム状態 — ユニット
@@ -606,7 +676,9 @@ const mapImg = document.getElementById('map-img');
 
 // hexEls: addr → SVGPolygonElement（createHexGrid が返す Map）
 let hexEls = new Map();
-let unitsLayerEl = null;
+let unitsLayerEl  = null;
+let riverLayerEl  = null;
+let riverHoverEl  = null;   // ホバー中ヘックスサイドのプレビューライン
 
 function setupSVG(W, H) {
   svg.setAttribute('width',   W);
@@ -625,7 +697,14 @@ function setupSVG(W, H) {
     groupId:    'hex-grid',
   });
 
-  // ユニット描画レイヤー（グリッド線の上）
+  // 河川レイヤー（グリッド線の上、ユニットの下）
+  riverLayerEl = makeSVGEl('g', { id: 'river-layer' });
+  riverHoverEl = makeSVGEl('line', { class: 'river-hover' });
+  riverHoverEl.style.display = 'none';
+  riverLayerEl.appendChild(riverHoverEl);
+  svg.appendChild(riverLayerEl);
+
+  // ユニット描画レイヤー（最上層）
   unitsLayerEl = makeSVGEl('g', { id: 'units-layer' });
   svg.appendChild(unitsLayerEl);
 
@@ -633,6 +712,7 @@ function setupSVG(W, H) {
   svg.addEventListener('click',      onMouseClick);
   svg.addEventListener('mouseleave', () => {
     document.getElementById('hud-hover').textContent = '—';
+    setRiverHoverLine(null);
   });
 }
 
@@ -663,13 +743,36 @@ function getHexAt(clientX, clientY) {
 let lastHoverAddr = null;
 
 function onMouseMove(e) {
+  // 河川設定モード: ヘックスサイドをハイライト
+  if (riverEditMode) {
+    const { x, y } = viewportToMap(e.clientX, e.clientY);
+    const hs = getNearestHexside(x, y);
+    if (hs) {
+      setRiverHoverLine(hs.corners);
+      const isRiver = isRiverHexside(hs.addrA, hs.addrB);
+      document.getElementById('hud-hover').textContent =
+        `${hs.addrA}|${hs.addrB} [${isRiver ? '河川' : '−'}]`;
+      document.getElementById('river-hex-label').textContent =
+        `${hs.addrA} ↔ ${hs.addrB}`;
+    } else {
+      setRiverHoverLine(null);
+      document.getElementById('hud-hover').textContent = '—';
+    }
+    return;
+  }
+
   const h = getHexAt(e.clientX, e.clientY);
   const addr = h?.addr ?? null;
 
   // 地形設定モード中はアドレス＋地形種別を表示
   if (terrainEditMode) {
-    document.getElementById('hud-hover').textContent =
-      addr ? `${addr} [${TERRAIN_JP[getTerrain(addr)]}]` : '—';
+    if (addr) {
+      const types = getTerrainTypes(addr);
+      const typeStr = types.length ? types.map(t => TERRAIN_JP[t]).join('+') : 'Flat';
+      document.getElementById('hud-hover').textContent = `${addr} [${typeStr}]`;
+    } else {
+      document.getElementById('hud-hover').textContent = '—';
+    }
     lastHoverAddr = addr;
     return;
   }
@@ -697,14 +800,26 @@ function isHighlighted(addr) {
 
 function onMouseClick(e) {
   if (e.button !== 0) return;
+
+  // 河川設定モード: クリックでヘックスサイドをトグル
+  if (riverEditMode) {
+    const { x, y } = viewportToMap(e.clientX, e.clientY);
+    const hs = getNearestHexside(x, y);
+    if (hs) {
+      toggleRiverHexside(hs.addrA, hs.addrB);
+      const isRiver = isRiverHexside(hs.addrA, hs.addrB);
+      document.getElementById('river-hex-label').textContent =
+        `${hs.addrA} ↔ ${hs.addrB} [${isRiver ? '河川追加' : '削除'}]`;
+    }
+    return;
+  }
+
   const h = getHexAt(e.clientX, e.clientY);
   if (!h) return;
 
-  // 地形設定モード中はクリックで地形をサイクル
+  // 地形設定モード中はクリックでチェックボックス対象ヘックスを切り替え
   if (terrainEditMode) {
-    const next = cycleTerrain(h.addr);
-    document.getElementById('hud-hover').textContent =
-      `${h.addr} [${TERRAIN_JP[next]}]`;
+    setTerrainEditHex(h.addr);
     return;
   }
 
@@ -729,6 +844,42 @@ function deselect() {
 }
 
 // ============================================================
+// 河川レイヤー描画
+// ============================================================
+
+function renderRiverLayer() {
+  if (!riverLayerEl) return;
+  // 既存の河川ライン削除（ホバーラインは残す）
+  for (const c of [...riverLayerEl.children]) {
+    if (c !== riverHoverEl) c.remove();
+  }
+  for (const r of riverHexsides) {
+    const corners = getHexsideCorners(r.from, r.to);
+    if (!corners) continue;
+    const cls = isBridgeHexside(r.from, r.to) ? 'river-bridge' : 'river-line';
+    const line = makeSVGEl('line', {
+      x1: corners[0].x, y1: corners[0].y,
+      x2: corners[1].x, y2: corners[1].y,
+      class: cls,
+    });
+    riverLayerEl.insertBefore(line, riverHoverEl);
+  }
+}
+
+function setRiverHoverLine(corners) {
+  if (!riverHoverEl) return;
+  if (corners) {
+    riverHoverEl.setAttribute('x1', corners[0].x);
+    riverHoverEl.setAttribute('y1', corners[0].y);
+    riverHoverEl.setAttribute('x2', corners[1].x);
+    riverHoverEl.setAttribute('y2', corners[1].y);
+    riverHoverEl.style.display = '';
+  } else {
+    riverHoverEl.style.display = 'none';
+  }
+}
+
+// ============================================================
 // 移動力・BFS用ヘルパー
 // ============================================================
 
@@ -741,16 +892,81 @@ function getMA(type) {
 /** 河川ヘックスサイドキー（辞書順正規化） */
 function riverKey(a, b) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
 
-/** 河川越えか（道路経由なら false） */
-function isRiverCrossing(fromAddr, toAddr) {
-  if (!riverHexsides.has(riverKey(fromAddr, toAddr))) return false;
-  // 両方が道路ヘックスなら道路（橋）経由とみなす
-  return !(roadHexes.has(fromAddr) && roadHexes.has(toAddr));
+/** 河川ヘックスサイドか */
+function isRiverHexside(a, b) {
+  const key = riverKey(a, b);
+  return riverHexsides.some(r => riverKey(r.from, r.to) === key);
 }
 
-/** 道路経由移動か（難地形ペナルティ回避判定に使用） */
+/** 橋ヘックスサイドか */
+function isBridgeHexside(a, b) {
+  const key = riverKey(a, b);
+  return bridgeHexsides.some(r => riverKey(r.from, r.to) === key);
+}
+
+/** 河川越えか（橋があれば false） */
+function isRiverCrossing(fromAddr, toAddr) {
+  return isRiverHexside(fromAddr, toAddr) && !isBridgeHexside(fromAddr, toAddr);
+}
+
+/** 道路経由移動か（難地形ペナルティ回避） */
 function isOnRoad(fromAddr, toAddr) {
   return roadHexes.has(fromAddr) && roadHexes.has(toAddr);
+}
+
+/** 河川ヘックスサイドをトグル */
+function toggleRiverHexside(a, b) {
+  const key = riverKey(a, b);
+  const idx = riverHexsides.findIndex(r => riverKey(r.from, r.to) === key);
+  if (idx >= 0) {
+    riverHexsides.splice(idx, 1);
+  } else {
+    const [f, t] = a < b ? [a, b] : [b, a];
+    riverHexsides.push({ from: f, to: t });
+  }
+  renderRiverLayer();
+}
+
+/**
+ * 隣接2ヘックスの共有ヘックスサイドの頂点2点を返す
+ * FlatTopLayout: 方向 i の共有コーナーは corners[(i+5)%6] と corners[i]
+ */
+function getHexsideCorners(addrA, addrB) {
+  const colLblA = parseInt(addrA.slice(0, 2), 10);
+  const rowLblA = parseInt(addrA.slice(2),    10);
+  const colLblB = parseInt(addrB.slice(0, 2), 10);
+  const rowLblB = parseInt(addrB.slice(2),    10);
+  const cubeA = labelToCube(colLblA, rowLblA);
+  const cubeB = labelToCube(colLblB, rowLblB);
+  const diff = cubeB.subtract(cubeA);
+  const dirIdx = FlatTopLayout.DIRS.findIndex(d => d.q === diff.q && d.r === diff.r && d.s === diff.s);
+  if (dirIdx < 0) return null;
+  const corners = layout.hexCorners(toIdx(colLblA), toIdx(rowLblA));
+  return [corners[(dirIdx + 5) % 6], corners[dirIdx]];
+}
+
+/**
+ * マップ座標 (mapX, mapY) に最も近いヘックスサイドを返す
+ * @returns {{ addrA, addrB, corners } | null}
+ */
+function getNearestHexside(mapX, mapY) {
+  const cube = layout.pixelToHex(mapX, mapY);
+  const { col: colLbl, row: rowLbl } = cubeToLabel(cube);
+  if (!inBounds(colLbl, rowLbl)) return null;
+  const addrA = hexAddr(colLbl, rowLbl);
+  let nearest = null, minDist = Infinity;
+  for (const nCube of layout.neighbors(cube)) {
+    const { col: nC, row: nR } = cubeToLabel(nCube);
+    if (!inBounds(nC, nR)) continue;
+    const addrB = hexAddr(nC, nR);
+    const corners = getHexsideCorners(addrA, addrB);
+    if (!corners) continue;
+    const midX = (corners[0].x + corners[1].x) / 2;
+    const midY = (corners[0].y + corners[1].y) / 2;
+    const dist = Math.hypot(mapX - midX, mapY - midY);
+    if (dist < minDist) { minDist = dist; nearest = { addrA, addrB, corners }; }
+  }
+  return nearest;
 }
 
 /** addr にいる全ユニットを返す */
@@ -815,9 +1031,8 @@ function computeReachable(unit) {
       if (unit.army === 'french' && !prussianDeployed && (col === 19 || col === 20)) continue;
 
       // ⑥ 停止条件の判定
-      const terrain    = getTerrain(nAddr);
       const onRoad     = isOnRoad(addr, nAddr);
-      const isDifficult = ['woods', 'buildings', 'walled_buildings'].includes(terrain) && !onRoad;
+      const isDifficult = isDifficultTerrain(nAddr) && !onRoad;
       const hasEnemyAdj = isEnemyAdjacentTo(nAddr, unit.army);
       const mustStop    = isDifficult || hasEnemyAdj;
 
@@ -1380,26 +1595,84 @@ cps.on(renderChitUI);
 renderChitUI(cps.getState());
 
 // ============================================================
+// 地形編集 — チェックボックスUI
+// ============================================================
+function setTerrainEditHex(addr) {
+  terrainEditAddr = addr;
+  document.getElementById('terrain-hex-label').textContent = `ヘックス: ${addr}`;
+  const types = getTerrainTypes(addr);
+  document.getElementById('tc-ridge').checked            = types.includes('ridge');
+  document.getElementById('tc-woods').checked            = types.includes('woods');
+  document.getElementById('tc-buildings').checked        = types.includes('buildings');
+  document.getElementById('tc-walled_buildings').checked = types.includes('walled_buildings');
+}
+
+// ============================================================
 // 地形ツールバー
 // ============================================================
+function setRiverEditMode(on) {
+  riverEditMode = on;
+  const btn   = document.getElementById('btn-river-toggle');
+  const panel = document.getElementById('river-edit-panel');
+  if (on) {
+    btn.textContent = '河川設定 ON';
+    btn.classList.replace('btn-neutral', 'btn-river-on');
+    panel.style.display = 'block';
+    svg.style.cursor = 'crosshair';
+    if (selectedUnitId !== null) deselect();
+  } else {
+    btn.textContent = '河川設定 OFF';
+    btn.classList.replace('btn-river-on', 'btn-neutral');
+    panel.style.display = 'none';
+    setRiverHoverLine(null);
+    svg.style.cursor = '';
+    document.getElementById('hud-hover').textContent = '—';
+  }
+}
+
+document.getElementById('btn-river-toggle').addEventListener('click', () => {
+  if (!riverEditMode && terrainEditMode) {
+    // 地形モードを先に切る
+    terrainEditMode = false;
+    document.getElementById('btn-terrain-toggle').textContent = '地形設定 OFF';
+    document.getElementById('btn-terrain-toggle').classList.replace('btn-terrain-on', 'btn-neutral');
+    document.getElementById('terrain-edit-panel').style.display = 'none';
+    terrainEditAddr = null;
+  }
+  setRiverEditMode(!riverEditMode);
+});
+
 document.getElementById('btn-terrain-toggle').addEventListener('click', () => {
   terrainEditMode = !terrainEditMode;
-  const btn    = document.getElementById('btn-terrain-toggle');
-  const legend = document.getElementById('terrain-legend');
+  const btn   = document.getElementById('btn-terrain-toggle');
+  const panel = document.getElementById('terrain-edit-panel');
   if (terrainEditMode) {
+    if (riverEditMode) setRiverEditMode(false);  // 河川モードを切る
     btn.textContent = '地形設定 ON';
     btn.classList.replace('btn-neutral', 'btn-terrain-on');
-    legend.classList.add('visible');
+    panel.style.display = 'block';
     svg.style.cursor = 'crosshair';
     if (selectedUnitId !== null) deselect();
   } else {
     btn.textContent = '地形設定 OFF';
     btn.classList.replace('btn-terrain-on', 'btn-neutral');
-    legend.classList.remove('visible');
+    panel.style.display = 'none';
+    terrainEditAddr = null;
     svg.style.cursor = '';
     document.getElementById('hud-hover').textContent = '—';
   }
 });
+
+// チェックボックス変更イベント
+for (const type of ['ridge', 'woods', 'buildings', 'walled_buildings']) {
+  document.getElementById(`tc-${type}`).addEventListener('change', () => {
+    if (!terrainEditAddr) return;
+    toggleTerrainType(terrainEditAddr, type);
+    const types = getTerrainTypes(terrainEditAddr);
+    const typeStr = types.length ? types.map(t => TERRAIN_JP[t]).join('+') : 'Flat';
+    document.getElementById('hud-hover').textContent = `${terrainEditAddr} [${typeStr}]`;
+  });
+}
 
 document.getElementById('btn-terrain-export').addEventListener('click', exportTerrainJSON);
 

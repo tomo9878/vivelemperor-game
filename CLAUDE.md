@@ -477,13 +477,16 @@ Road to Brussels VP hexにフランスユニットが進入・隣接した場合
    - `index.html`：マップ画像 + SVGオーバーレイ、パン＆ズーム、駒クリック移動プロトタイプ
 2. ✅ **ユニット配置・表示**（マルチユニット、type/army/small プロパティ）
    - `index.html` に実装済み：
-     - `units` 配列：`{ id, col, row, type, army, small, imageHref }` 構造
+     - `units` 配列：`{ id, col, row, type, army, small, imageHref, sp, af, er, hits, battleworn, isHeavyArtillery, isDetachment? }` 構造
      - `type`: `'infantry' | 'artillery' | 'HC' | 'LC'`
      - `army`: `'french' | 'allied' | 'prussian'`
      - `drawAllUnits()` — SVGユニット層（`#units-layer`）に全ユニットを描画
      - 軍色アンダーバー（仏=青、連合=赤、プロイセン=グレー）
      - ユニットクリックで選択、選択中は金色枠
-   - 未実装：両面（Fresh/Battleworn）、Shaken/Disrupted マーカー表示
+     - ステータスバッジ：上辺赤ライン(Battleworn)、右上角 S(Shaken)/D(Disrupted)、左上角ヒット数ドット
+   - **連合軍初期配置実装済み**（29ユニット：I/II/RC/CC各コープス + Detachment 3体）
+   - sp/af/er は暫定値（カウンター現物で要確認）
+   - 未実装：Fresh/Battleworn 裏面画像切り替え
 3. ✅ **チットプルシステム**（マーカー管理、ランダム抽選）
    - `chit-pull.js`：`ChitPullSystem` クラス
      - カップ管理（15枚初期：仏×6、連合×5、Napoleon×2、Wellington、Blücher）
@@ -518,11 +521,33 @@ Road to Brussels VP hexにフランスユニットが進入・隣接した場合
      - `hex-reachable`（青） / `hex-stop`（オレンジ）の2色ハイライト
      - ユニットクリックで選択・ハイライト表示、移動先クリックで移動、Esc で解除
    - 未実装：Forced March、道路データ入力UI、河川データ入力UI
-6. **砲撃戦闘解決**（射程・LOS計算、ダイス判定）
+5.5 ✅ **LOS（Line of Sight）計算**
+   - `index.html` に実装済み：
+     - `isLOSBlocker(addr, fromIsRidge, toIsRidge)` — 中間ヘックスの遮断判定（ルールA/B/C）
+     - `calcLOS(fromAddr, toAddr)` → boolean — hex_linedraw（ε双方向ナッジ）でhexside通過を検出
+       - ルールA: 両方Flat → Ridge が遮断
+       - ルールB: 同一高度 → woods/buildings/walled_buildings が遮断
+       - ルールC: 異高度(flat↔ridge) → Ridge上の遮蔽地形が遮断
+       - ルールD: hexside通過時は両ヘックスをチェック
+6. ✅ **砲撃戦闘解決**（射程・LOS・ダイス判定・ステップロス）
+   - `index.html` に実装済み：
+     - `hexDistance(addrA, addrB)` — Cube座標による絶対距離
+     - `getUnitStatus(unit)` → `'fresh'|'shaken'|'disrupted'|'battleworn'`
+     - `getEffectiveAF(unit)` / `getEffectiveER(unit)` — Disrupted/Shaken修正後の有効値
+     - `getValidBombardmentTargets(attacker)` — AF>0・射程（HA=4,他=3）・LOS条件を満たす敵リスト
+     - `calcBombardmentDice(attacker, targetAddr, opts)` — 基本=AF、Plunging+1、Canister+1、Target in Square+1、Desultory÷2
+     - `calcBombardmentTargetNumber(targetAddr, unit)` — Clear=4、Woods/Buildings=5、WB=6、Cavalry-1
+     - `resolveBombardment(attacker, target, opts)` — ダイスロール・成功/Partial/Hit判定・モーダル表示
+     - Detachment in WB 特殊処理（6が2個で1成功）
+     - `applyHit(unit)` — 1Hit適用、3rd HitでBattleworn転換、Panic Test案内
+     - `addCombatLog(msg)` / `renderCombatLog()` — HUD下部に戦闘ログ表示
+     - UIフロー：ユニット選択→「砲撃(AF=N)」ボタン→赤ハイライト→クリック→モーダル→解決
+     - `hex-bombard`（赤）ハイライト追加
+   - 未実装：Combined Fire（複数ユニット合算）、Panic Test自動判定、後退処理
 7. **近接戦闘解決**（各種ボーナス・修正の適用）
 8. **敵自動判定ロジック**（Target Priority計算が核心）
 9. **Wellington/Blücher/Napoleon処理**
-10. **ステップロス・Panic Test・Rally**
+10. **Panic Test・Rally・後退処理**
 11. **VP計算・勝利判定**
 
 ---

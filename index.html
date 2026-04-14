@@ -241,6 +241,45 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 .river-line    { stroke: #4499ff; stroke-width: 4; stroke-linecap: round; pointer-events: none; opacity: 0.85; }
 .river-bridge  { stroke: #44ddff; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 3; pointer-events: none; opacity: 0.85; }
 .river-hover   { stroke: #88ccff; stroke-width: 5; stroke-linecap: round; pointer-events: none; opacity: 0.65; stroke-dasharray: 8 4; }
+
+/* ---- Bombard highlight ---- */
+.hex-bombard { fill: rgba(255,50,50,0.22); stroke: #ff3333; stroke-width: 2.5; opacity: 1; }
+
+/* ---- Bombard result modal ---- */
+#bombard-modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center;
+}
+#bombard-modal.hidden { display: none; }
+#bombard-modal-box {
+  background: #1a1a2e; border: 1px solid #ff333366; border-radius: 8px;
+  padding: 20px 24px; width: 380px; max-height: 80vh; overflow-y: auto;
+}
+#bombard-modal-box h3 { font-size: 14px; color: #ff8888; margin-bottom: 10px; }
+#bombard-info  { font-size: 12px; color: #aaa; margin-bottom: 4px; }
+#bombard-dice-area { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.die-result {
+  width: 30px; height: 30px; border-radius: 5px; border: 1px solid;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: bold;
+}
+.die-success { background: #0a2a0a; border-color: #0f0;    color: #0f0; }
+.die-partial { background: #2a2a00; border-color: #ffd700; color: #ffd700; }
+.die-miss    { background: #1e1e2e; border-color: #444;    color: #666; }
+#bombard-result-area {
+  border-top: 1px solid #333; padding-top: 8px; margin-top: 6px;
+  font-size: 13px; color: #ccc; line-height: 1.8;
+}
+.bombard-hit    { color: #ff4444; font-size: 16px; font-weight: bold; }
+.bombard-no-hit { color: #0f0;    font-size: 16px; font-weight: bold; }
+#bombard-modal-footer { margin-top: 14px; display: flex; justify-content: flex-end; }
+
+/* ---- HUD action buttons & combat log ---- */
+#hud-actions { margin-top: 6px; display: flex; gap: 5px; flex-wrap: wrap; min-height: 0; }
+#combat-log  { margin-top: 6px; font-size: 10px; color: #888; max-height: 64px; overflow-y: auto; line-height: 1.6; }
+.cl-entry    { padding: 0; }
+.cl-entry.cl-new { color: #ff9999; }
 </style>
 </head>
 <body>
@@ -262,6 +301,8 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
   <div class="val" id="hud-piece">—</div>
   <div class="label">状態</div>
   <div class="dim" id="hud-state">待機中</div>
+  <div id="hud-actions"></div>
+  <div id="combat-log"></div>
 </div>
 
 <!-- Legend -->
@@ -403,6 +444,19 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
     <div id="napoleon-options-list"></div>
     <div style="margin-top:10px;text-align:right">
       <button id="btn-napoleon-cancel" class="btn btn-neutral">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- 砲撃結果モーダル -->
+<div id="bombard-modal" class="hidden">
+  <div id="bombard-modal-box">
+    <h3 id="bombard-modal-title">砲撃戦闘</h3>
+    <div id="bombard-info"></div>
+    <div id="bombard-dice-area"></div>
+    <div id="bombard-result-area"></div>
+    <div id="bombard-modal-footer">
+      <button id="btn-bombard-resolve" class="btn btn-primary">解決済みにする</button>
     </div>
   </div>
 </div>
@@ -632,6 +686,112 @@ function isRidgeBlocking(addr) {
 }
 
 // ============================================================
+// LOS計算
+// ============================================================
+
+/**
+ * 中間ヘックスがLOSを遮断するか判定する。
+ * 射撃元・目標の高度（isRidge）に応じてルールA/B/Cを適用。
+ *
+ * ルールA: 両方Flat → Ridge が遮断
+ * ルールB: 同一高度（両Flat or 両Ridge） → woods/buildings/walled_buildings が遮断
+ * ルールC: 異高度（flat↔ridge） → Ridge上のwoods/buildings が遮断
+ *
+ * @param {string}  addr         - チェックする中間ヘックスのアドレス
+ * @param {boolean} fromIsRidge  - 射撃元がRidgeか
+ * @param {boolean} toIsRidge    - 目標がRidgeか
+ * @returns {boolean} trueなら遮断
+ */
+function isLOSBlocker(addr, fromIsRidge, toIsRidge) {
+  const sameElev = (fromIsRidge === toIsRidge);
+
+  // ルールA: 両方Flat → Ridge が遮断
+  if (!fromIsRidge && !toIsRidge && isRidge(addr)) return true;
+
+  // ルールB: 同一高度 → 遮蔽地形（woods/buildings/walled_buildings）が遮断
+  if (sameElev && isDifficultTerrain(addr)) return true;
+
+  // ルールC: 異高度 → Ridge上に遮蔽地形があれば遮断
+  if (!sameElev && isRidge(addr) && isDifficultTerrain(addr)) return true;
+
+  return false;
+}
+
+/**
+ * LOS（Line of Sight）計算。
+ * ヘックス中心からヘックス中心へ線を引き、中間ヘックスに遮断地形があるか判定する。
+ *
+ * redblobgames の hex_linedraw アルゴリズム（ε 双方向ナッジ）を使用し、
+ * LOSがヘックスサイド上を通過する場合を検出してルールDを適用する。
+ *
+ * @param {string} fromAddr - 射撃元ヘックス e.g. "0806"
+ * @param {string} toAddr   - 目標ヘックス  e.g. "1007"
+ * @returns {boolean} true=通視あり / false=遮断
+ */
+function calcLOS(fromAddr, toAddr) {
+  if (fromAddr === toAddr) return true;
+
+  const fromCol = parseInt(fromAddr.slice(0, 2), 10);
+  const fromRow = parseInt(fromAddr.slice(2),    10);
+  const toCol   = parseInt(toAddr.slice(0, 2),   10);
+  const toRow   = parseInt(toAddr.slice(2),       10);
+
+  const fromHex = labelToCube(fromCol, fromRow);
+  const toHex   = labelToCube(toCol,   toRow);
+
+  const N = fromHex.distance(toHex);
+  if (N <= 1) return true;  // 隣接・同一は中間ヘックスなし → 常に通視
+
+  const fromIsRidge = isRidge(fromAddr);
+  const toIsRidge   = isRidge(toAddr);
+
+  // ε 双方向ナッジ：LOSがヘックスサイド上を通るときに
+  // +ε と -ε が異なるヘックスに丸まることでサイド通過を検出する
+  const EPS = 1e-6;
+  const fP = { q: fromHex.q + EPS, r: fromHex.r + EPS, s: fromHex.s - 2 * EPS };
+  const tP = { q: toHex.q   + EPS, r: toHex.r   + EPS, s: toHex.s   - 2 * EPS };
+  const fM = { q: fromHex.q - EPS, r: fromHex.r - EPS, s: fromHex.s + 2 * EPS };
+  const tM = { q: toHex.q   - EPS, r: toHex.r   - EPS, s: toHex.s   + 2 * EPS };
+
+  const step = 1.0 / N;
+
+  // 分数Cube座標を線形補間してhexRoundで丸める
+  function lerpAndRound(a, b, t) {
+    return hexRound(
+      a.q * (1 - t) + b.q * t,
+      a.r * (1 - t) + b.r * t,
+      a.s * (1 - t) + b.s * t,
+    );
+  }
+
+  // CubeHex → アドレス文字列（範囲外はnull）
+  function cubeToAddr(hex) {
+    const { col, row } = cubeToLabel(hex);
+    return inBounds(col, row) ? hexAddr(col, row) : null;
+  }
+
+  for (let i = 1; i < N; i++) {
+    const t = step * i;
+    const hP = lerpAndRound(fP, tP, t);
+    const hM = lerpAndRound(fM, tM, t);
+
+    if (hP.equals(hM)) {
+      // 通常ヘックス通過（ルールA/B/C）
+      const addr = cubeToAddr(hP);
+      if (addr && isLOSBlocker(addr, fromIsRidge, toIsRidge)) return false;
+    } else {
+      // ヘックスサイド通過（ルールD）：両ヘックスをチェック
+      const addrP = cubeToAddr(hP);
+      const addrM = cubeToAddr(hM);
+      if (addrP && isLOSBlocker(addrP, fromIsRidge, toIsRidge)) return false;
+      if (addrM && isLOSBlocker(addrM, fromIsRidge, toIsRidge)) return false;
+    }
+  }
+
+  return true;
+}
+
+// ============================================================
 // ゲームデータ — 河川・道路
 // ============================================================
 // 河川ヘックスサイド: { from, to } オブジェクト配列（from < to で正規化）
@@ -657,16 +817,49 @@ let riverEditMode = false;
  * army: 'french' | 'allied' | 'prussian'
  * small: スモールユニット（スタック許容）
  */
+// NOTE: sp/af/er は実際のカウンター値を要確認（暫定値）
 const units = [
-  { id: 'fr1', col: 10, row: 10, type: 'infantry', army: 'french',  small: false, imageHref: 'images/foy_II_front.png' },
-  { id: 'fr2', col: 14, row: 11, type: 'HC',        army: 'french',  small: false, imageHref: 'images/lheritier_IIIC_front.png' },
-  { id: 'fr3', col:  6, row: 11, type: 'LC',         army: 'french',  small: false, imageHref: 'images/pire_II_front.png' },
-  { id: 'al1', col: 10, row:  7, type: 'infantry',  army: 'allied',  small: false, imageHref: 'images/jerome_II_front.png' },
-  { id: 'al2', col:  8, row:  7, type: 'HC',         army: 'allied',  small: false, imageHref: 'images/bachelu_II_front.png' },
+  // I Corps (Prince of Orange)
+  //                                                                          sp  af  er  hits  bw     heavyArt
+  { id: 'chasse_I',         col:  1, row: 4, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/chasse_I_front.png',                sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'cooke_I',          col:  6, row: 7, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/cooke_I_front.png',                 sp: 5, af: 1, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'kielmansegge_I',   col:  7, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/kielmansegge_I_front.png',          sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'alten_I',          col:  8, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/alten_I_front.png',                 sp: 4, af: 1, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'bylandt_I',        col: 11, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/bylandt_I_front.png',               sp: 3, af: 1, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'saxeweimar_I',     col: 16, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/saxe-weimar_I_front.png',           sp: 3, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  // II Corps (Hill)
+  { id: 'halkett_II',       col:  3, row: 4, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/halkett_II_front.png',              sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'mitchell_II',      col:  3, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/mitchell_II_front.png',             sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'clinton_II',       col:  4, row: 7, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/clinton_II_front.png',              sp: 4, af: 1, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false },
+  // RC (Wellington)
+  { id: '1brunswick_RC',    col:  6, row: 3, type: 'infantry',  army: 'allied', small: true,  imageHref: 'images/1_brunswick_RC_front.png',          sp: 3, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: '2brunswick_RC',    col:  6, row: 3, type: 'infantry',  army: 'allied', small: true,  imageHref: 'images/2_brunswick_RC_front.png',          sp: 3, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'kruse_RC',         col:  7, row: 5, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/kruse_RC_front.png',                sp: 3, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: '1reserve_RC',      col:  7, row: 7, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/1_reserve_RC_front.png',            sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: '2reserve_RC',      col:  9, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/2_reserve_RC_front.png',            sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'picton_RC',        col: 12, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/picton_RC_front.png',               sp: 5, af: 1, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'lambert_RC',       col: 13, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/lambert_RC_front.png',              sp: 4, af: 1, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'vincke_RC',        col: 14, row: 6, type: 'infantry',  army: 'allied', small: false, imageHref: 'images/vincke_RC_front.png',               sp: 3, af: 0, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  // CC (Uxbridge)
+  { id: 'rightflank_CC',    col:  6, row: 6, type: 'LC',        army: 'allied', small: false, imageHref: 'images/right_flank_CC_front.png',          sp: 2, af: 0, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'somerset_CC',      col:  8, row: 5, type: 'HC',        army: 'allied', small: false, imageHref: 'images/somerset_CC_front.png',             sp: 4, af: 0, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: '1netherland_CC',   col:  9, row: 3, type: 'LC',        army: 'allied', small: true,  imageHref: 'images/1_netherland_CC_front.png',         sp: 2, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: '2netherland_CC',   col:  9, row: 3, type: 'LC',        army: 'allied', small: true,  imageHref: 'images/2_netherland_CC_front.png',         sp: 2, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'ha_reserve_CC',    col:  9, row: 4, type: 'artillery', army: 'allied', small: false, imageHref: 'images/horse_art_R_CC_front.png',          sp: 0, af: 2, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'ponsonby_CC',      col: 11, row: 4, type: 'HC',        army: 'allied', small: false, imageHref: 'images/ponsonby_CC_front.png',             sp: 4, af: 0, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'vandeleur_CC',     col: 13, row: 4, type: 'LC',        army: 'allied', small: false, imageHref: 'images/vandeleur_CC_front.png',            sp: 2, af: 0, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  { id: 'vivian_CC',        col: 16, row: 5, type: 'LC',        army: 'allied', small: false, imageHref: 'images/vivian_CC_front.png',               sp: 2, af: 0, er: 4, hits: 0, battleworn: false, isHeavyArtillery: false },
+  // Detachments（isDetachment: true → 城壁建物の特殊ルール適用）
+  { id: 'hougoumont_det',   col:  4, row: 9, type: 'infantry',  army: 'allied', small: true,  imageHref: 'images/hougoumount_detachment_front.png',  sp: 2, af: 0, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false, isDetachment: true },
+  { id: 'lahayesainte_det', col: 10, row: 7, type: 'infantry',  army: 'allied', small: true,  imageHref: 'images/la_haye_sainte_detachment_front.png', sp: 2, af: 0, er: 5, hits: 0, battleworn: false, isHeavyArtillery: false, isDetachment: true },
+  { id: 'papelotte_det',    col: 16, row: 7, type: 'infantry',  army: 'allied', small: true,  imageHref: 'images/papelotte_detachment_front.png',    sp: 1, af: 0, er: 3, hits: 0, battleworn: false, isHeavyArtillery: false, isDetachment: true },
 ];
 
 let selectedUnitId = null;          // 選択中ユニットID
 const reachableMap = new Map();     // addr → mustStop（true=停止必須）
+let bombardMode = false;            // 砲撃モード中か
+const bombardTargetAddrs = new Set(); // 砲撃可能な敵ユニットのアドレスSet
+const combatLog = [];               // 戦闘ログ（最新を先頭）
 
 // ============================================================
 // SVG管理
@@ -795,7 +988,9 @@ function isHighlighted(addr) {
   if (!selectedUnitId) return false;
   const unit = units.find(u => u.id === selectedUnitId);
   if (!unit) return false;
-  return addr === hexAddr(unit.col, unit.row) || reachableMap.has(addr);
+  const selAddr = hexAddr(unit.col, unit.row);
+  if (bombardMode) return addr === selAddr || bombardTargetAddrs.has(addr);
+  return addr === selAddr || reachableMap.has(addr);
 }
 
 function onMouseClick(e) {
@@ -824,7 +1019,17 @@ function onMouseClick(e) {
   }
 
   if (selectedUnitId !== null) {
-    if (reachableMap.has(h.addr)) {
+    const selUnit = units.find(u => u.id === selectedUnitId);
+    if (bombardMode) {
+      if (bombardTargetAddrs.has(h.addr) && selUnit) {
+        // 砲撃ターゲットをクリック
+        const targetUnit = getUnitsAt(h.addr).find(u => u.army !== selUnit.army);
+        if (targetUnit) resolveBombardment(selUnit, targetUnit);
+        // 解決はモーダルの「解決済みにする」ボタンで完了 → deselect内で処理
+      } else {
+        deselect();
+      }
+    } else if (reachableMap.has(h.addr)) {
       // 移動実行
       moveUnit(selectedUnitId, h.col, h.row);
     } else {
@@ -838,8 +1043,12 @@ function onMouseClick(e) {
 function deselect() {
   selectedUnitId = null;
   reachableMap.clear();
+  bombardMode = false;
+  bombardTargetAddrs.clear();
   refreshHighlights();
   setHudState('待機中');
+  const actEl = document.getElementById('hud-actions');
+  if (actEl) actEl.innerHTML = '';
   drawAllUnits();
 }
 
@@ -1056,7 +1265,9 @@ function refreshHighlights() {
   for (const addr of hexEls.keys()) {
     if (selAddr && addr === selAddr) {
       setHexClass(addr, 'hex-selected');
-    } else if (reachableMap.has(addr)) {
+    } else if (bombardMode && bombardTargetAddrs.has(addr)) {
+      setHexClass(addr, 'hex-bombard');
+    } else if (!bombardMode && reachableMap.has(addr)) {
       setHexClass(addr, reachableMap.get(addr) ? 'hex-stop' : 'hex-reachable');
     } else {
       setHexClass(addr, addr === lastHoverAddr ? 'hex-hover' : 'hex-normal');
@@ -1123,6 +1334,47 @@ function drawAllUnits() {
     g.appendChild(glow);
     g.appendChild(img);
     g.appendChild(bar);
+
+    // ---- ステータスバッジ ----
+    // Battlewornインジケーター（上辺の赤ライン）
+    if (unit.battleworn) {
+      const bwBar = makeSVGEl('rect', {
+        x: x - IW / 2, y: y - IH / 2,
+        width: IW, height: 3,
+        fill: '#ff3333', opacity: '0.9', rx: '1',
+      });
+      g.appendChild(bwBar);
+    }
+    // Shaken(S) / Disrupted(D) バッジ（右上角）
+    const _status = getUnitStatus(unit);
+    if (_status === 'shaken' || _status === 'disrupted') {
+      const badgeColor = _status === 'shaken' ? '#ff8c00' : '#ff2222';
+      const badge = makeSVGEl('rect', {
+        x: x + IW / 2 - 14, y: y - IH / 2 + 1,
+        width: 13, height: 13,
+        fill: badgeColor, rx: '2', 'pointer-events': 'none',
+      });
+      const badgeTxt = makeSVGEl('text', {
+        x: x + IW / 2 - 7, y: y - IH / 2 + 11,
+        fill: '#fff', 'font-size': '9', 'font-weight': 'bold',
+        'text-anchor': 'middle', 'pointer-events': 'none',
+      });
+      badgeTxt.textContent = _status === 'shaken' ? 'S' : 'D';
+      g.appendChild(badge);
+      g.appendChild(badgeTxt);
+    }
+    // ヒット数ドット（左上角）
+    if ((unit.hits ?? 0) > 0) {
+      const dots = '●'.repeat(Math.min(unit.hits, 3));
+      const hitTxt = makeSVGEl('text', {
+        x: x - IW / 2 + 4, y: y - IH / 2 + 11,
+        fill: '#ff4444', 'font-size': '9', 'font-weight': 'bold',
+        'pointer-events': 'none',
+      });
+      hitTxt.textContent = dots;
+      g.appendChild(hitTxt);
+    }
+
     unitsLayerEl.appendChild(g);
 
     // ユニットクリックで選択（SVGへの伝播を止める）
@@ -1133,11 +1385,14 @@ function drawAllUnits() {
         deselect();
       } else {
         selectedUnitId = unit.id;
+        bombardMode = false;
+        bombardTargetAddrs.clear();
         computeReachable(unit);
         refreshHighlights();
         drawAllUnits();
         document.getElementById('hud-piece').textContent = hexAddr(unit.col, unit.row);
-        setHudState(`${unit.id} 選択中 (MA=${getMA(unit.type)}) — 移動先をクリック`);
+        setHudState(`${unit.id} 選択中 (MA=${getMA(unit.type)})`);
+        updateHudActions(unit);
       }
     });
   }
@@ -1155,6 +1410,342 @@ function moveUnit(unitId, col, row) {
   drawAllUnits();
   document.getElementById('hud-piece').textContent = hexAddr(col, row);
   setHudState('待機中');
+}
+
+// ============================================================
+// ユニットステータス計算
+// ============================================================
+
+/**
+ * ユニットの現在ステータスを返す
+ * @returns {'fresh'|'shaken'|'disrupted'|'battleworn'}
+ */
+function getUnitStatus(unit) {
+  if (!unit.battleworn) {
+    if ((unit.hits ?? 0) >= 2) return 'disrupted';
+    if ((unit.hits ?? 0) >= 1) return 'shaken';
+    return 'fresh';
+  } else {
+    if ((unit.hits ?? 0) >= 2) return 'disrupted';
+    if ((unit.hits ?? 0) >= 1) return 'shaken';
+    return 'battleworn';
+  }
+}
+
+/** 有効AF（Disrupted時 -1） */
+function getEffectiveAF(unit) {
+  const af = unit.af ?? 0;
+  return getUnitStatus(unit) === 'disrupted' ? Math.max(0, af - 1) : af;
+}
+
+/** 有効ER（Shaken/Disrupted時 -1） */
+function getEffectiveER(unit) {
+  const er = unit.er ?? 4;
+  const st = getUnitStatus(unit);
+  return (st === 'shaken' || st === 'disrupted') ? Math.max(1, er - 1) : er;
+}
+
+// ============================================================
+// ヘックス距離
+// ============================================================
+
+/**
+ * 2アドレス間のヘックス距離（絶対値・地形コスト無視）
+ */
+function hexDistance(addrA, addrB) {
+  const cA = parseInt(addrA.slice(0, 2), 10), rA = parseInt(addrA.slice(2), 10);
+  const cB = parseInt(addrB.slice(0, 2), 10), rB = parseInt(addrB.slice(2), 10);
+  return labelToCube(cA, rA).distance(labelToCube(cB, rB));
+}
+
+// ============================================================
+// ステップロス
+// ============================================================
+
+/**
+ * ユニットに1 Hit を適用し、ステータスを更新する。
+ * 3rd Hit (Fresh面) → Battleworn に裏返し Panic Test 案内。
+ * 3rd Hit (Battleworn面) → 2ヘックス後退（要手動処理）案内。
+ */
+function applyHit(unit) {
+  if (!unit.battleworn) {
+    unit.hits = (unit.hits ?? 0) + 1;
+    if (unit.hits >= 3) {
+      unit.battleworn = true;
+      unit.hits = 0;
+      addCombatLog(`[${unit.id}] Battleworn に！Panic Test を実施してください`);
+    } else if (unit.hits === 2) {
+      addCombatLog(`[${unit.id}] Disrupted（SP/AF/ER -1）`);
+    } else {
+      addCombatLog(`[${unit.id}] Shaken（ER -1）`);
+    }
+  } else {
+    unit.hits = (unit.hits ?? 0) + 1;
+    if (unit.hits >= 3) {
+      addCombatLog(`[${unit.id}] 2ヘックス後退！（後退不能なら消滅）`);
+    } else if (unit.hits === 2) {
+      addCombatLog(`[${unit.id}] Disrupted（SP/AF/ER -1）`);
+    } else {
+      addCombatLog(`[${unit.id}] Shaken（ER -1）`);
+    }
+  }
+  drawAllUnits();
+}
+
+// ============================================================
+// 戦闘ログ
+// ============================================================
+
+function addCombatLog(msg) {
+  combatLog.unshift(msg);
+  if (combatLog.length > 30) combatLog.pop();
+  renderCombatLog();
+}
+
+function renderCombatLog() {
+  const el = document.getElementById('combat-log');
+  if (!el) return;
+  el.innerHTML = '';
+  combatLog.slice(0, 6).forEach((msg, i) => {
+    const div = document.createElement('div');
+    div.className = 'cl-entry' + (i === 0 ? ' cl-new' : '');
+    div.textContent = msg;
+    el.appendChild(div);
+  });
+}
+
+// ============================================================
+// 砲撃戦闘（Bombardment Combat）
+// ============================================================
+
+/**
+ * 有効な砲撃ターゲット一覧（敵ユニット）を返す。
+ * 条件：攻撃側AF>0、射程内、LOS通視
+ */
+function getValidBombardmentTargets(attackerUnit) {
+  if (getEffectiveAF(attackerUnit) <= 0) return [];
+  const attackerAddr = hexAddr(attackerUnit.col, attackerUnit.row);
+  const range = attackerUnit.isHeavyArtillery ? 4 : 3;
+
+  return units.filter(target => {
+    if (target.army === attackerUnit.army) return false;
+    const targetAddr = hexAddr(target.col, target.row);
+    const dist = hexDistance(attackerAddr, targetAddr);
+    if (dist < 1 || dist > range) return false;
+    return calcLOS(attackerAddr, targetAddr);
+  });
+}
+
+/**
+ * 砲撃ダイス数を計算する。
+ * @param {object} attacker - 攻撃側ユニット
+ * @param {string} targetAddr - 目標ヘックスアドレス
+ * @param {object} [opts]
+ * @param {boolean} [opts.isDesultory=false] - Desultory Fire か
+ * @returns {number} ダイス数（最小1）
+ */
+function calcBombardmentDice(attacker, targetAddr, { isDesultory = false } = {}) {
+  const attackerAddr = hexAddr(attacker.col, attacker.row);
+  let dice = getEffectiveAF(attacker);
+  if (dice <= 0) return 0;
+
+  // Plunging Fire: 攻撃側 Ridge・目標 Flat
+  if (isRidge(attackerAddr) && !isRidge(targetAddr)) dice++;
+
+  // Canister（Point Blank）: 隣接、Desultory 時は不可
+  if (!isDesultory && hexDistance(attackerAddr, targetAddr) === 1) dice++;
+
+  // Target in Square: 目標が Infantry, Clear ヘックス, 攻撃側 Cavalry が隣接
+  const hasInfantryTarget = getUnitsAt(targetAddr).some(
+    u => u.army !== attacker.army && u.type === 'infantry'
+  );
+  if (hasInfantryTarget) {
+    const isClear = !isRidge(targetAddr) && !isDifficultTerrain(targetAddr);
+    if (isClear) {
+      const cavAdj = neighborAddrs(targetAddr).some(n =>
+        getUnitsAt(n).some(u =>
+          u.army === attacker.army && (u.type === 'HC' || u.type === 'LC')
+        )
+      );
+      if (cavAdj) dice++;
+    }
+  }
+
+  // Desultory Fire: 半分（切り上げ）
+  if (isDesultory) dice = Math.ceil(dice / 2);
+
+  return Math.max(1, dice);
+}
+
+/**
+ * 砲撃目標数（Target Number）を計算する。
+ * @param {string} targetAddr - 目標ヘックスアドレス
+ * @param {object} targetUnit - 目標ユニット
+ * @returns {number} 目標数
+ */
+function calcBombardmentTargetNumber(targetAddr, targetUnit) {
+  const types = getTerrainTypes(targetAddr);
+  let tn;
+  if      (types.includes('walled_buildings')) tn = 6;
+  else if (types.includes('buildings') ||
+           types.includes('woods'))            tn = 5;
+  else                                         tn = 4; // Clear
+
+  // 目標が Cavalry: -1
+  if (targetUnit && (targetUnit.type === 'HC' || targetUnit.type === 'LC')) tn--;
+
+  return tn;
+}
+
+/** D6を1個振る */
+function rollD6() { return Math.floor(Math.random() * 6) + 1; }
+
+/**
+ * 砲撃戦闘を解決し、結果モーダルを表示する。
+ * Hit適用はモーダルの「解決済みにする」ボタン押下時に実行。
+ */
+function resolveBombardment(attackerUnit, targetUnit, { isDesultory = false } = {}) {
+  const targetAddr = hexAddr(targetUnit.col, targetUnit.row);
+  const numDice = calcBombardmentDice(attackerUnit, targetAddr, { isDesultory });
+  const tn = calcBombardmentTargetNumber(targetAddr, targetUnit);
+
+  // Detachment in Walled Buildings: 6が2個で1 Success
+  const isDetachWB = !!(targetUnit.isDetachment &&
+                        getTerrainTypes(targetAddr).includes('walled_buildings'));
+
+  const rolls = Array.from({ length: numDice }, rollD6);
+
+  let successes = 0, partials = 0;
+  if (isDetachWB) {
+    // 6が2個 → 1 Success（1個の6は効果なし）
+    successes = Math.floor(rolls.filter(r => r === 6).length / 2);
+  } else {
+    for (const r of rolls) {
+      if      (r > tn)  successes++;
+      else if (r === tn) partials++;
+    }
+    successes += Math.floor(partials / 2);
+    partials   = partials % 2;  // 余ったPartial
+  }
+
+  const hit = successes >= 1;
+
+  // ボーナス情報（説明用）
+  const bonuses = [];
+  const attackerAddr = hexAddr(attackerUnit.col, attackerUnit.row);
+  if (isRidge(attackerAddr) && !isRidge(targetAddr)) bonuses.push('Plunging Fire +1');
+  if (!isDesultory && hexDistance(attackerAddr, targetAddr) === 1) bonuses.push('Canister +1');
+  if (isDesultory) bonuses.push('Desultory ÷2');
+  if (isDetachWB)  bonuses.push('Detachment in WB (6×2必要)');
+
+  showBombardModal({
+    attackerUnit, targetUnit, targetAddr,
+    numDice, tn, rolls, successes, partials, hit,
+    isDetachWB, bonuses,
+    onResolve: () => {
+      const logParts = rolls.join(',');
+      addCombatLog(
+        `砲撃: ${attackerUnit.id}→${targetUnit.id}` +
+        ` [${logParts}] TN${tn} → ${hit ? '1 Hit!' : 'No Hit'}`
+      );
+      if (hit) applyHit(targetUnit);
+      deselect();
+    },
+  });
+}
+
+// ---- 砲撃結果モーダル ----
+
+let _bombardOnResolve = null;
+
+function showBombardModal({ attackerUnit, targetUnit, numDice, tn, rolls,
+                            successes, partials, hit, isDetachWB, bonuses, onResolve }) {
+  document.getElementById('bombard-modal-title').textContent =
+    `砲撃: ${attackerUnit.id} → ${targetUnit.id}`;
+
+  // 情報行
+  const infoEl = document.getElementById('bombard-info');
+  infoEl.innerHTML =
+    `<span style="color:#888">ダイス数:</span> <b>${numDice}</b>` +
+    `　<span style="color:#888">目標数:</span> <b>TN${tn}</b>`;
+  if (bonuses.length) {
+    infoEl.innerHTML += `<br><span style="color:#ff8c00;font-size:11px">${bonuses.join(' / ')}</span>`;
+  }
+
+  // ダイス表示
+  const diceEl = document.getElementById('bombard-dice-area');
+  diceEl.innerHTML = '';
+  for (const r of rolls) {
+    const span = document.createElement('span');
+    span.className = 'die-result ';
+    if (isDetachWB) {
+      span.className += (r === 6) ? 'die-success' : 'die-miss';
+    } else {
+      if      (r > tn)  span.className += 'die-success';
+      else if (r === tn) span.className += 'die-partial';
+      else              span.className += 'die-miss';
+    }
+    span.textContent = r;
+    diceEl.appendChild(span);
+  }
+
+  // 凡例
+  const legendSpan = document.createElement('span');
+  legendSpan.style.cssText = 'font-size:10px;color:#555;display:block;margin-top:4px;';
+  legendSpan.textContent = isDetachWB
+    ? '緑=6（2個で1成功）'
+    : `緑=>TN成功  金=TN Partial（2個で1成功）  グレー=失敗`;
+  diceEl.appendChild(legendSpan);
+
+  // 結果
+  const resultEl = document.getElementById('bombard-result-area');
+  let summary = isDetachWB
+    ? `6の目: ${rolls.filter(r => r === 6).length} / 2必要　成功: ${successes}`
+    : `成功: ${successes}　Partial余り: ${partials > 0 ? partials + '個' : 'なし'}`;
+  resultEl.innerHTML =
+    `<div style="color:#aaa;font-size:12px">${summary}</div>` +
+    `<div class="${hit ? 'bombard-hit' : 'bombard-no-hit'}">${hit ? '💥 1 Hit!' : '✓ No Hit'}</div>`;
+
+  _bombardOnResolve = onResolve;
+  document.getElementById('bombard-modal').classList.remove('hidden');
+}
+
+// ---- HUD アクションボタン ----
+
+/**
+ * 選択中ユニットに応じてHUDアクションボタンを更新する。
+ */
+function updateHudActions(unit) {
+  const el = document.getElementById('hud-actions');
+  if (!el) return;
+  el.innerHTML = '';
+
+  // 砲撃ボタン
+  const af = getEffectiveAF(unit);
+  if (af > 0) {
+    const btn = makeBtn(`砲撃 (AF=${af})`, 'btn-danger', () => {
+      startBombardMode(unit);
+    });
+    el.appendChild(btn);
+  }
+}
+
+/**
+ * 砲撃モードに入り、有効ターゲットを赤くハイライトする。
+ */
+function startBombardMode(unit) {
+  bombardMode = true;
+  bombardTargetAddrs.clear();
+  reachableMap.clear();  // 移動ハイライトを消す
+
+  const targets = getValidBombardmentTargets(unit);
+  for (const t of targets) bombardTargetAddrs.add(hexAddr(t.col, t.row));
+
+  refreshHighlights();
+  const msg = targets.length > 0
+    ? `${unit.id} 砲撃モード — ターゲットをクリック (${targets.length}体)`
+    : `${unit.id} — 射程・LOS内に有効ターゲットなし`;
+  setHudState(msg);
 }
 
 // ============================================================
@@ -1537,6 +2128,12 @@ function openRollModal(marker, table, onResolve, preamble = '') {
 document.getElementById('btn-roll-resolve').addEventListener('click', () => {
   document.getElementById('roll-modal').classList.add('hidden');
   if (_rollResolve) { _rollResolve(); _rollResolve = null; }
+});
+
+// ---- 砲撃結果モーダル — 解決ボタン ----
+document.getElementById('btn-bombard-resolve').addEventListener('click', () => {
+  document.getElementById('bombard-modal').classList.add('hidden');
+  if (_bombardOnResolve) { _bombardOnResolve(); _bombardOnResolve = null; }
 });
 
 // ---- Napoleon選択モーダル ----

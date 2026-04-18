@@ -245,6 +245,9 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 /* ---- Bombard highlight ---- */
 .hex-bombard { fill: rgba(255,50,50,0.22); stroke: #ff3333; stroke-width: 2.5; opacity: 1; }
 
+/* ---- Melee highlight ---- */
+.hex-melee   { fill: rgba(255,100,30,0.25); stroke: #ff6622; stroke-width: 2.5; opacity: 1; }
+
 /* ---- Bombard result modal ---- */
 #bombard-modal {
   position: fixed; inset: 0; z-index: 50;
@@ -280,6 +283,44 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 #combat-log  { margin-top: 6px; font-size: 10px; color: #888; max-height: 64px; overflow-y: auto; line-height: 1.6; }
 .cl-entry    { padding: 0; }
 .cl-entry.cl-new { color: #ff9999; }
+
+/* ---- Test Scenario Panel ---- */
+#test-panel {
+  position: fixed; bottom: 12px; left: 200px; z-index: 20;
+  background: rgba(0,0,0,.85); border: 1px solid #553300;
+  border-radius: 8px; font-size: 11px; color: #aaa;
+  max-width: 380px;
+}
+#test-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-bottom: 1px solid #333; cursor: pointer;
+}
+#test-panel-header .tp-title { color: #f90; font-weight: bold; font-size: 12px; }
+#test-panel-body { display: none; padding: 8px 10px; max-height: 340px; overflow-y: auto; }
+#test-panel-body.open { display: block; }
+.tp-category { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: .08em; margin: 8px 0 4px; }
+.tp-category:first-child { margin-top: 0; }
+.tp-scenario {
+  display: flex; gap: 6px; align-items: flex-start;
+  padding: 4px 0; border-bottom: 1px solid #1a1a1a;
+}
+.tp-scenario:last-child { border-bottom: none; }
+.tp-btn { padding: 2px 7px; border-radius: 3px; border: 1px solid #553300; background: #2a1500; color: #f90; cursor: pointer; font-size: 10px; flex-shrink: 0; }
+.tp-btn:hover { background: #3a2000; }
+.tp-desc { font-size: 10px; color: #888; line-height: 1.4; }
+
+/* ---- Close Combat Modal ---- */
+#melee-modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,.75);
+  display: flex; align-items: center; justify-content: center;
+}
+#melee-modal.hidden { display: none; }
+#melee-modal-box {
+  background: #1a1a2e; border: 1px solid #ff664466; border-radius: 8px;
+  padding: 20px 24px; width: 460px; max-height: 85vh; overflow-y: auto;
+}
+#melee-modal-box h3 { font-size: 14px; color: #ff9966; margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -448,6 +489,24 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
   </div>
 </div>
 
+<!-- テストシナリオパネル -->
+<div id="test-panel">
+  <div id="test-panel-header">
+    <span class="tp-title">🧪 テストシナリオ</span>
+    <span id="test-panel-toggle" style="color:#666;font-size:10px">▼ 開く</span>
+  </div>
+  <div id="test-panel-body"></div>
+</div>
+
+<!-- 近接戦闘モーダル -->
+<div id="melee-modal" class="hidden">
+  <div id="melee-modal-box">
+    <h3 id="melee-modal-title">近接戦闘</h3>
+    <div id="melee-content"></div>
+    <div id="melee-modal-footer" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end"></div>
+  </div>
+</div>
+
 <!-- 砲撃結果モーダル -->
 <div id="bombard-modal" class="hidden">
   <div id="bombard-modal-box">
@@ -463,6 +522,7 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 
 <script src="hex-lib.js"></script>
 <script src="chit-pull.js"></script>
+<script src="test-scenarios.js" defer></script>
 <script>
 // ============================================================
 // VLE グリッド設定（Vassalモジュールより実測）
@@ -859,6 +919,8 @@ let selectedUnitId = null;          // 選択中ユニットID
 const reachableMap = new Map();     // addr → mustStop（true=停止必須）
 let bombardMode = false;            // 砲撃モード中か
 const bombardTargetAddrs = new Set(); // 砲撃可能な敵ユニットのアドレスSet
+let meleeMode = false;              // 近接攻撃モード中か
+const meleeTargetAddrs = new Set(); // 近接攻撃可能な敵ユニットのアドレスSet
 const combatLog = [];               // 戦闘ログ（最新を先頭）
 
 // ============================================================
@@ -990,6 +1052,7 @@ function isHighlighted(addr) {
   if (!unit) return false;
   const selAddr = hexAddr(unit.col, unit.row);
   if (bombardMode) return addr === selAddr || bombardTargetAddrs.has(addr);
+  if (meleeMode)   return addr === selAddr || meleeTargetAddrs.has(addr);
   return addr === selAddr || reachableMap.has(addr);
 }
 
@@ -1029,6 +1092,15 @@ function onMouseClick(e) {
       } else {
         deselect();
       }
+    } else if (meleeMode) {
+      if (meleeTargetAddrs.has(h.addr) && selUnit) {
+        // 近接攻撃ターゲットをクリック
+        const targetUnit = getValidCloseCombatTargets(selUnit)
+          .find(t => hexAddr(t.col, t.row) === h.addr);
+        if (targetUnit) resolveCloseCombat(selUnit, targetUnit);
+      } else {
+        deselect();
+      }
     } else if (reachableMap.has(h.addr)) {
       // 移動実行
       moveUnit(selectedUnitId, h.col, h.row);
@@ -1045,6 +1117,8 @@ function deselect() {
   reachableMap.clear();
   bombardMode = false;
   bombardTargetAddrs.clear();
+  meleeMode = false;
+  meleeTargetAddrs.clear();
   refreshHighlights();
   setHudState('待機中');
   const actEl = document.getElementById('hud-actions');
@@ -1267,7 +1341,9 @@ function refreshHighlights() {
       setHexClass(addr, 'hex-selected');
     } else if (bombardMode && bombardTargetAddrs.has(addr)) {
       setHexClass(addr, 'hex-bombard');
-    } else if (!bombardMode && reachableMap.has(addr)) {
+    } else if (meleeMode && meleeTargetAddrs.has(addr)) {
+      setHexClass(addr, 'hex-melee');
+    } else if (!bombardMode && !meleeMode && reachableMap.has(addr)) {
       setHexClass(addr, reachableMap.get(addr) ? 'hex-stop' : 'hex-reachable');
     } else {
       setHexClass(addr, addr === lastHoverAddr ? 'hex-hover' : 'hex-normal');
@@ -1381,12 +1457,30 @@ function drawAllUnits() {
     g.addEventListener('click', (e) => {
       e.stopPropagation();
       if (terrainEditMode) return;
+
+      const selUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) : null;
+      const unitAddr = hexAddr(unit.col, unit.row);
+
+      // 砲撃モード中: 敵ユニット画像クリックで砲撃解決
+      if (bombardMode && selUnit && unit.army !== selUnit.army && bombardTargetAddrs.has(unitAddr)) {
+        resolveBombardment(selUnit, unit);
+        return;
+      }
+
+      // 近接攻撃モード中: 敵ユニット画像クリックで戦闘開始
+      if (meleeMode && selUnit && unit.army !== selUnit.army && meleeTargetAddrs.has(unitAddr)) {
+        resolveCloseCombat(selUnit, unit);
+        return;
+      }
+
       if (selectedUnitId === unit.id) {
         deselect();
       } else {
         selectedUnitId = unit.id;
         bombardMode = false;
         bombardTargetAddrs.clear();
+        meleeMode = false;
+        meleeTargetAddrs.clear();
         computeReachable(unit);
         refreshHighlights();
         drawAllUnits();
@@ -1724,9 +1818,24 @@ function updateHudActions(unit) {
   const af = getEffectiveAF(unit);
   if (af > 0) {
     const btn = makeBtn(`砲撃 (AF=${af})`, 'btn-danger', () => {
+      meleeMode = false;
+      meleeTargetAddrs.clear();
       startBombardMode(unit);
     });
     el.appendChild(btn);
+  }
+
+  // 近接攻撃ボタン（Artillery は不可）
+  if (unit.type !== 'artillery') {
+    const meleeTargets = getValidCloseCombatTargets(unit);
+    if (meleeTargets.length > 0) {
+      const btn = makeBtn(`近接攻撃 (${meleeTargets.length})`, 'btn-warn', () => {
+        bombardMode = false;
+        bombardTargetAddrs.clear();
+        startMeleeMode(unit);
+      });
+      el.appendChild(btn);
+    }
   }
 }
 
@@ -1745,6 +1854,538 @@ function startBombardMode(unit) {
   const msg = targets.length > 0
     ? `${unit.id} 砲撃モード — ターゲットをクリック (${targets.length}体)`
     : `${unit.id} — 射程・LOS内に有効ターゲットなし`;
+  setHudState(msg);
+}
+
+// ============================================================
+// 近接戦闘（Close Combat）
+// ============================================================
+
+/** 有効SP（Disrupted時 -1） */
+function getEffectiveSP(unit) {
+  const sp = unit.sp ?? 0;
+  return getUnitStatus(unit) === 'disrupted' ? Math.max(0, sp - 1) : sp;
+}
+
+/**
+ * 有効な近接攻撃ターゲット一覧を返す。
+ * Infantry: 隣接している敵のみ / Cavalry: 最大2ヘックス, LOS, 難地形不可, 河川越え不可
+ * Artillery は攻撃不可。
+ */
+function getValidCloseCombatTargets(attacker) {
+  if (attacker.type === 'artillery') return [];
+  const attackerAddr = hexAddr(attacker.col, attacker.row);
+
+  return units.filter(target => {
+    if (target.army === attacker.army) return false;
+    const targetAddr = hexAddr(target.col, target.row);
+    const dist = hexDistance(attackerAddr, targetAddr);
+
+    if (attacker.type === 'infantry') {
+      return dist === 1;
+    }
+    // Cavalry
+    if (dist < 1 || dist > 2) return false;
+    if (!calcLOS(attackerAddr, targetAddr)) return false;
+    if (isDifficultTerrain(targetAddr)) return false;
+    if (dist === 1 && isRiverCrossing(attackerAddr, targetAddr)) return false;
+    return true;
+  });
+}
+
+/**
+ * 攻撃側のダイス数を計算する。
+ * SP + Confident + Enfilade + Heavy Cavalry
+ */
+function calcMeleeAttackerDice(attacker, defender, attackerAddr, defenderAddr, { confident = false } = {}) {
+  let dice = getEffectiveSP(attacker);
+  if (confident) dice++;
+  // Enfilade: 防御側ヘックスの隣接友軍（攻撃元除く）
+  let enfiladeCount = 0;
+  for (const nAddr of neighborAddrs(defenderAddr)) {
+    if (nAddr === attackerAddr) continue;
+    if (getUnitsAt(nAddr).some(u => u.army === attacker.army)) enfiladeCount++;
+  }
+  dice += Math.min(2, enfiladeCount);
+  if (attacker.type === 'HC') dice += 2;
+  return Math.max(0, dice);
+}
+
+/**
+ * 防御側のダイス数を計算する。
+ * SP + AF + Downhill Fire
+ */
+function calcMeleeDefenderDice(attacker, defender, attackerAddr, defenderAddr) {
+  let dice = getEffectiveSP(defender) + getEffectiveAF(defender);
+  if (isRidge(defenderAddr) && !isRidge(attackerAddr)) dice++;
+  return Math.max(0, dice);
+}
+
+/**
+ * 近接戦闘の目標数を計算する。
+ * @returns {{ defER: number, atkER: number }}
+ *   defER = 攻撃側が目指す数（防御側ER+Cover修正）
+ *   atkER = 防御側が目指す数（攻撃側ER）
+ */
+function calcMeleeTargetNumbers(attacker, defender, attackerAddr, defenderAddr, {
+  formSquareSuccess = false,
+  formSquareFail    = false,
+} = {}) {
+  let defER = getEffectiveER(defender);
+
+  // Form Square
+  if (formSquareSuccess) defER = Math.min(6, defER + 2);
+  if (formSquareFail)    defER = Math.max(1, defER - 2);
+
+  // Cover（woods / buildings）: +1
+  const defTypes = getTerrainTypes(defenderAddr);
+  if (defTypes.includes('woods') || defTypes.includes('buildings')) defER = Math.min(6, defER + 1);
+
+  // Heavy Cover（walled_buildings Detachment）: +2
+  if (defTypes.includes('walled_buildings') && defender.isDetachment) defER = Math.min(6, defER + 2);
+
+  // River Barrier（攻撃側が河川越え）: +1
+  if (isRiverCrossing(attackerAddr, defenderAddr)) defER = Math.min(6, defER + 1);
+
+  // Cavalry vs Artillery: 防御側ER -1
+  if ((attacker.type === 'HC' || attacker.type === 'LC') && defender.type === 'artillery') {
+    defER = Math.max(1, defER - 1);
+  }
+
+  const atkER = getEffectiveER(attacker);
+  return { defER, atkER };
+}
+
+/**
+ * numDice個のD6を振り、目標数 tn に対する成功数を返す。
+ * > tn: 成功 / = tn: Partial（2個で1成功）
+ */
+function rollMeleeDice(numDice, tn) {
+  const rolls = Array.from({ length: numDice }, rollD6);
+  let successes = 0, partials = 0;
+  for (const r of rolls) {
+    if      (r > tn)  successes++;
+    else if (r === tn) partials++;
+  }
+  successes += Math.floor(partials / 2);
+  return { rolls, successes };
+}
+
+/**
+ * ダイス目をHTMLで描画する。
+ * > tn: 緑 / = tn: 金 / それ以外: グレー
+ */
+function meleeDiceHTML(rolls, tn) {
+  return rolls.map(r => {
+    const cls = r > tn ? 'die-success' : (r === tn ? 'die-partial' : 'die-miss');
+    return `<span class="die-result ${cls}">${r}</span>`;
+  }).join('');
+}
+
+/**
+ * 後退方向スコアを返すファクトリ。
+ * スコアが高いほど優先して選ばれる。
+ * French: 南優先 / Allied: 北・北西 / Prussian: 北・北東
+ */
+function getRetreatScoreFn(army) {
+  return function(fromAddr, toAddr) {
+    const dr = parseInt(toAddr.slice(2), 10) - parseInt(fromAddr.slice(2), 10); // 正=南
+    const dc = parseInt(toAddr.slice(0, 2), 10) - parseInt(fromAddr.slice(0, 2), 10);
+    if (army === 'french')   return dr;
+    if (army === 'allied')   return -dr + (dc <= 0 ? 1 : 0);
+    /* prussian */           return -dr + (dc >= 0 ? 1 : 0);
+  };
+}
+
+/**
+ * unit を hexCount ヘックス後退させる。
+ * - 後退不能ヘックス分は 1 Hit ずつ適用
+ * - 敵隣接ヘックスを通過する場合は 1 Hit（友軍がいれば免除）
+ * @returns {string[]} ログメッセージ配列
+ */
+function doRetreat(unit, hexCount) {
+  const logs = [];
+  const scoreFn = getRetreatScoreFn(unit.army);
+  let currentAddr = hexAddr(unit.col, unit.row);
+  const visited = new Set([currentAddr]);
+
+  for (let step = 0; step < hexCount; step++) {
+    const neighbors = neighborAddrs(currentAddr);
+    const valid = neighbors.filter(nAddr => {
+      if (visited.has(nAddr)) return false;
+      if (getUnitsAt(nAddr).some(u => u.army !== unit.army)) return false;
+      if (!canLandAt(nAddr, unit)) return false;
+      return true;
+    });
+    valid.sort((a, b) => scoreFn(currentAddr, b) - scoreFn(currentAddr, a));
+
+    if (valid.length === 0) {
+      applyHit(unit);
+      logs.push(`[${unit.id}] 後退不能 → 1 Hit`);
+    } else {
+      currentAddr = valid[0];
+      visited.add(currentAddr);
+      unit.col = parseInt(currentAddr.slice(0, 2), 10);
+      unit.row = parseInt(currentAddr.slice(2), 10);
+      logs.push(`[${unit.id}] → ${currentAddr} に後退`);
+
+      // 敵隣接ペナルティ（友軍がいれば免除）
+      const occupants = getUnitsAt(currentAddr).filter(u => u.id !== unit.id);
+      const hasFriendly = occupants.some(u => u.army === unit.army);
+      if (!hasFriendly && isEnemyAdjacentTo(currentAddr, unit.army)) {
+        applyHit(unit);
+        logs.push(`[${unit.id}] 敵隣接通過 → 1 Hit`);
+      }
+    }
+  }
+
+  drawAllUnits();
+  return logs;
+}
+
+// ---- 近接戦闘モーダル ヘルパー ----
+
+function showMeleeModal(content, buttons) {
+  document.getElementById('melee-content').innerHTML = content;
+  const footer = document.getElementById('melee-modal-footer');
+  footer.innerHTML = '';
+  for (const { label, cls, cb } of buttons) {
+    footer.appendChild(makeBtn(label, cls, cb));
+  }
+  document.getElementById('melee-modal').classList.remove('hidden');
+}
+
+function closeMeleeModal() {
+  document.getElementById('melee-modal').classList.add('hidden');
+}
+
+/**
+ * 近接戦闘フロー全体のエントリーポイント。
+ * 各 Step を順番にモーダルで表示し、結果を適用する。
+ */
+function resolveCloseCombat(attacker, defender) {
+  const attackerAddr = hexAddr(attacker.col, attacker.row);
+  const defenderAddr = hexAddr(defender.col, defender.row);
+
+  document.getElementById('melee-modal-title').textContent =
+    `近接戦闘: ${attacker.id} → ${defender.id}`;
+
+  // -----------------------------------------------
+  // Step A: Cavalry Withdrawal
+  // (attacker=Infantry, defender=French Cavalry)
+  // -----------------------------------------------
+  function stepA() {
+    const isCavWithdrawal =
+      attacker.type === 'infantry' &&
+      defender.army === 'french' &&
+      (defender.type === 'HC' || defender.type === 'LC');
+
+    if (isCavWithdrawal) {
+      showMeleeModal(
+        `<div style="color:#ffd700;font-weight:bold;margin-bottom:8px">Cavalry Withdrawal</div>` +
+        `<div style="font-size:12px;color:#aaa">` +
+          `防御側 <b>${defender.id}</b>（French Cavalry）は撤退を選択できます。<br>` +
+          `撤退：ダイスなし、<b>${attacker.id}</b> の勝利・前進。` +
+        `</div>`,
+        [
+          { label: '撤退する（2ヘックス後退）', cls: 'btn-warn', cb: () => {
+            closeMeleeModal();
+            const msgs = doRetreat(defender, 2);
+            attacker.col = parseInt(defenderAddr.slice(0, 2), 10);
+            attacker.row = parseInt(defenderAddr.slice(2), 10);
+            drawAllUnits();
+            msgs.forEach(m => addCombatLog(m));
+            addCombatLog(`近接戦闘: ${attacker.id}→${defender.id} [Cavalry Withdrawal]`);
+            addCombatLog(`[${attacker.id}] → ${defenderAddr} に前進`);
+            deselect();
+          }},
+          { label: '戦闘する', cls: 'btn-danger', cb: () => {
+            closeMeleeModal();
+            stepB();
+          }},
+        ]
+      );
+    } else {
+      stepB();
+    }
+  }
+
+  // -----------------------------------------------
+  // Step B: Close to Contact Test
+  // -----------------------------------------------
+  function stepB() {
+    const atkER = getEffectiveER(attacker);
+    const defER = getEffectiveER(defender);
+
+    showMeleeModal(
+      `<div style="font-size:12px;color:#aaa;margin-bottom:10px">` +
+        `<b style="color:#fff">${attacker.id}</b> が Close to Contact Test を実施<br>` +
+        `ER = ${atkER}　→　1d6 ≤ ${atkER} で成功` +
+      `</div>`,
+      [
+        { label: '🎲 ダイスを振る', cls: 'btn-primary', cb: () => {
+          const roll = rollD6();
+          const success = roll <= atkER;
+          // Confident: 攻撃側ER - 防御側ER >= 2 で大差成功
+          const confident = success && (atkER - defER >= 2);
+
+          let content =
+            `<div style="font-size:28px;text-align:center;color:${success ? '#0f0' : '#f66'};margin:8px 0">` +
+              `🎲 ${roll}` +
+            `</div>` +
+            `<div style="text-align:center;font-weight:bold;font-size:14px;color:${success ? '#0f0' : '#f66'}">` +
+              (success ? `成功！（${roll} ≤ ER${atkER}）` : `失敗…（${roll} > ER${atkER}）`) +
+            `</div>`;
+
+          if (confident) {
+            content += `<div style="color:#ffd700;margin-top:6px;font-size:12px;text-align:center">` +
+              `✦ Confident！（ER差 +${atkER - defER}）→ 攻撃ダイス +1` +
+            `</div>`;
+          }
+
+          if (success) {
+            showMeleeModal(content, [
+              { label: '戦闘へ →', cls: 'btn-primary', cb: () => {
+                closeMeleeModal();
+                stepC(confident);
+              }},
+            ]);
+          } else {
+            // 失敗
+            if (attacker.type === 'infantry') {
+              content += `<div style="color:#ff8c00;margin-top:8px;font-size:12px">` +
+                `Infantry は Desultory Fire（砲撃ダイス÷2）を選択できます。` +
+              `</div>`;
+              showMeleeModal(content, [
+                { label: 'Desultory Fire', cls: 'btn-warn', cb: () => {
+                  closeMeleeModal();
+                  const af = getEffectiveAF(attacker);
+                  if (af > 0) {
+                    resolveBombardment(attacker, defender, { isDesultory: true });
+                  } else {
+                    addCombatLog(`${attacker.id}: AF=0のためDesultory Fire不可`);
+                    deselect();
+                  }
+                }},
+                { label: '攻撃中止', cls: 'btn-neutral', cb: () => {
+                  closeMeleeModal();
+                  addCombatLog(`近接戦闘: ${attacker.id}→${defender.id} [Close to Contact 失敗・中止]`);
+                  deselect();
+                }},
+              ]);
+            } else {
+              // Cavalry: 何もできない
+              content += `<div style="color:#ff4444;margin-top:8px;font-size:12px;text-align:center">Cavalry は攻撃を実施できません。</div>`;
+              showMeleeModal(content, [
+                { label: '閉じる', cls: 'btn-neutral', cb: () => {
+                  closeMeleeModal();
+                  addCombatLog(`近接戦闘: ${attacker.id}→${defender.id} [Close to Contact 失敗]`);
+                  deselect();
+                }},
+              ]);
+            }
+          }
+        }},
+      ]
+    );
+  }
+
+  // -----------------------------------------------
+  // Step C: Form Square Test（Cavalry → Infantry のみ）
+  // -----------------------------------------------
+  function stepC(confident) {
+    const isCavVsInf =
+      (attacker.type === 'HC' || attacker.type === 'LC') &&
+      defender.type === 'infantry';
+
+    if (isCavVsInf) {
+      const defER = getEffectiveER(defender);
+      showMeleeModal(
+        `<div style="font-weight:bold;color:#fff;margin-bottom:8px">Form Square Test</div>` +
+        `<div style="font-size:12px;color:#aaa">` +
+          `Cavalry が Infantry を攻撃します。<br>` +
+          `防御側 <b>${defender.id}</b>（ER=${defER}）が Elan Test：<br>` +
+          `1d6 ≤ ${defER} → 成功（ER +2）　失敗 → ER -2` +
+        `</div>`,
+        [
+          { label: '🎲 ダイスを振る', cls: 'btn-primary', cb: () => {
+            const roll = rollD6();
+            const success = roll <= defER;
+            const content =
+              `<div style="font-size:28px;text-align:center;color:${success ? '#0f0' : '#f66'};margin:8px 0">` +
+                `🎲 ${roll}` +
+              `</div>` +
+              `<div style="text-align:center;font-weight:bold;font-size:14px;color:${success ? '#0f0' : '#f66'}">` +
+                (success ? `成功！→ 防御側 ER +2` : `失敗… → 防御側 ER -2`) +
+              `</div>`;
+            showMeleeModal(content, [
+              { label: '戦闘へ →', cls: 'btn-primary', cb: () => {
+                closeMeleeModal();
+                stepD(confident, success, !success);
+              }},
+            ]);
+          }},
+        ]
+      );
+    } else {
+      stepD(confident, false, false);
+    }
+  }
+
+  // -----------------------------------------------
+  // Step D: 戦闘ダイスロール
+  // -----------------------------------------------
+  function stepD(confident, formSquareSuccess, formSquareFail) {
+    const { defER, atkER } = calcMeleeTargetNumbers(
+      attacker, defender, attackerAddr, defenderAddr,
+      { formSquareSuccess, formSquareFail }
+    );
+    const atkDice = calcMeleeAttackerDice(attacker, defender, attackerAddr, defenderAddr, { confident });
+    const defDice = calcMeleeDefenderDice(attacker, defender, attackerAddr, defenderAddr);
+
+    // ボーナス説明
+    const atkBonuses = [];
+    if (confident) atkBonuses.push('Confident +1');
+    const enfiladeCount = Math.min(2, neighborAddrs(defenderAddr).filter(nAddr =>
+      nAddr !== attackerAddr && getUnitsAt(nAddr).some(u => u.army === attacker.army)
+    ).length);
+    if (enfiladeCount > 0) atkBonuses.push(`Enfilade +${enfiladeCount}`);
+    if (attacker.type === 'HC') atkBonuses.push('Heavy Cavalry +2');
+
+    const defBonuses = [];
+    if (isRidge(defenderAddr) && !isRidge(attackerAddr)) defBonuses.push('Downhill +1d');
+    const defTypes = getTerrainTypes(defenderAddr);
+    if (defTypes.includes('woods') || defTypes.includes('buildings')) defBonuses.push('Cover ER+1');
+    if (defTypes.includes('walled_buildings') && defender.isDetachment)  defBonuses.push('Heavy Cover ER+2');
+    if (isRiverCrossing(attackerAddr, defenderAddr)) defBonuses.push('River Barrier ER+1');
+    if ((attacker.type === 'HC' || attacker.type === 'LC') && defender.type === 'artillery') defBonuses.push('vs Artillery ER-1');
+    if (formSquareSuccess) defBonuses.push('Form Square ER+2');
+    if (formSquareFail)    defBonuses.push('Form Square Fail ER-2');
+
+    showMeleeModal(
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">` +
+        `<div style="background:rgba(91,181,255,.08);border:1px solid #5bb5ff33;border-radius:5px;padding:8px">` +
+          `<div style="color:#5bb5ff;font-weight:bold;margin-bottom:4px">攻撃側: ${attacker.id}</div>` +
+          `<div style="font-size:11px;color:#aaa">ダイス: <b>${atkDice}</b>　TN &gt; ${atkER}</div>` +
+          (atkBonuses.length ? `<div style="font-size:10px;color:#ffd700;margin-top:3px">${atkBonuses.join(' / ')}</div>` : '') +
+        `</div>` +
+        `<div style="background:rgba(255,136,136,.08);border:1px solid #ff888833;border-radius:5px;padding:8px">` +
+          `<div style="color:#ff8888;font-weight:bold;margin-bottom:4px">防御側: ${defender.id}</div>` +
+          `<div style="font-size:11px;color:#aaa">ダイス: <b>${defDice}</b>　TN &gt; ${defER}</div>` +
+          (defBonuses.length ? `<div style="font-size:10px;color:#ffd700;margin-top:3px">${defBonuses.join(' / ')}</div>` : '') +
+        `</div>` +
+      `</div>`,
+      [
+        { label: '🎲 双方ダイスを振る', cls: 'btn-primary', cb: () => {
+          const atkResult = rollMeleeDice(atkDice, atkER);
+          const defResult = rollMeleeDice(defDice, defER);
+          const atkHits = Math.min(3, atkResult.successes);
+          const defHits = Math.min(3, defResult.successes);
+
+          const attackerWins = atkResult.successes > defResult.successes;
+          const draw = atkResult.successes === defResult.successes;
+
+          let winnerText, winnerColor;
+          if (draw)           { winnerText = '引き分け（防御側勝利）'; winnerColor = '#aaa'; }
+          else if (attackerWins) { winnerText = `${attacker.id} の勝利！`; winnerColor = '#0f0'; }
+          else                { winnerText = `${defender.id} の勝利！`; winnerColor = '#ff8888'; }
+
+          const content =
+            `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">` +
+              `<div>` +
+                `<div style="color:#5bb5ff;font-size:11px;margin-bottom:4px">攻撃側 TN&gt;${atkER}</div>` +
+                `<div style="display:flex;flex-wrap:wrap;gap:4px">${meleeDiceHTML(atkResult.rolls, atkER)}</div>` +
+                `<div style="font-size:11px;color:#aaa;margin-top:4px">成功: <b>${atkResult.successes}</b> → Hit ${atkHits}</div>` +
+              `</div>` +
+              `<div>` +
+                `<div style="color:#ff8888;font-size:11px;margin-bottom:4px">防御側 TN&gt;${defER}</div>` +
+                `<div style="display:flex;flex-wrap:wrap;gap:4px">${meleeDiceHTML(defResult.rolls, defER)}</div>` +
+                `<div style="font-size:11px;color:#aaa;margin-top:4px">成功: <b>${defResult.successes}</b> → Hit ${defHits}</div>` +
+              `</div>` +
+            `</div>` +
+            `<div style="font-size:15px;font-weight:bold;color:${winnerColor};text-align:center;` +
+              `padding:8px 0;border-top:1px solid #333;border-bottom:1px solid #333;margin-bottom:4px">` +
+              winnerText +
+            `</div>`;
+
+          showMeleeModal(content, [
+            { label: '結果を適用 →', cls: 'btn-primary', cb: () => {
+              closeMeleeModal();
+              stepE(atkHits, defHits, attackerWins, draw, atkResult, defResult, atkER, defER);
+            }},
+          ]);
+        }},
+      ]
+    );
+  }
+
+  // -----------------------------------------------
+  // Step E: 結果適用（Hit・移動・後退・Blown Horses）
+  // -----------------------------------------------
+  function stepE(atkHits, defHits, attackerWins, draw, atkResult, defResult, atkER, defER) {
+    const logs = [];
+
+    // Hit 適用（防御側から先）
+    for (let i = 0; i < defHits; i++) applyHit(defender);
+    if (defHits > 0) logs.push(`${defender.id}: ${defHits} Hit`);
+
+    for (let i = 0; i < atkHits; i++) applyHit(attacker);
+    if (atkHits > 0) logs.push(`${attacker.id}: ${atkHits} Hit`);
+
+    if (draw) {
+      // 引き分け: 攻撃側は元のヘックスに留まる
+      logs.push(`引き分け → 攻撃側は元の位置に留まる`);
+    } else if (attackerWins) {
+      // 防御側 2ヘックス後退 → 攻撃側が防御側の元いたヘックスへ前進
+      doRetreat(defender, 2).forEach(m => logs.push(m));
+      attacker.col = parseInt(defenderAddr.slice(0, 2), 10);
+      attacker.row = parseInt(defenderAddr.slice(2), 10);
+      logs.push(`[${attacker.id}] → ${defenderAddr} に前進`);
+    } else {
+      // 攻撃側 2ヘックス後退
+      doRetreat(attacker, 2).forEach(m => logs.push(m));
+    }
+
+    // Blown Horses: Cavalry 攻撃後は攻撃側に 1 Hit（勝敗に影響しない）
+    if (attacker.type === 'HC' || attacker.type === 'LC') {
+      applyHit(attacker);
+      logs.push(`[${attacker.id}] Blown Horses → 1 Hit`);
+    }
+
+    // 戦闘ログ出力
+    const summary =
+      `近接戦闘: ${attacker.id}→${defender.id}` +
+      ` [ATK:${atkResult.rolls.join(',')} TN${atkER}` +
+      ` / DEF:${defResult.rolls.join(',')} TN${defER}]` +
+      ` → ${attackerWins ? '攻撃側勝利' : draw ? '引き分け' : '防御側勝利'}`;
+    addCombatLog(summary);
+    logs.forEach(m => addCombatLog(m));
+
+    drawAllUnits();
+    deselect();
+  }
+
+  // フロー開始
+  stepA();
+}
+
+/**
+ * 近接攻撃モードに入り、有効ターゲットを橙赤くハイライトする。
+ */
+function startMeleeMode(unit) {
+  meleeMode = true;
+  meleeTargetAddrs.clear();
+  reachableMap.clear();
+  bombardMode = false;
+  bombardTargetAddrs.clear();
+
+  const targets = getValidCloseCombatTargets(unit);
+  for (const t of targets) meleeTargetAddrs.add(hexAddr(t.col, t.row));
+
+  refreshHighlights();
+  const msg = targets.length > 0
+    ? `${unit.id} 近接攻撃モード — ターゲットをクリック (${targets.length}体)`
+    : `${unit.id} — 近接攻撃可能ターゲットなし`;
   setHudState(msg);
 }
 
@@ -2280,6 +2921,61 @@ document.getElementById('terrain-import-input').addEventListener('change', e => 
   reader.onload = ev => importTerrainJSON(ev.target.result);
   reader.readAsText(file);
   e.target.value = '';   // 同一ファイルの再読込を可能にする
+});
+
+// ============================================================
+// テストシナリオパネル
+// ============================================================
+function initTestPanel() {
+  if (typeof TEST_SCENARIOS === 'undefined') return;
+
+  const body   = document.getElementById('test-panel-body');
+  const toggle = document.getElementById('test-panel-toggle');
+  let open = false;
+
+  document.getElementById('test-panel-header').addEventListener('click', () => {
+    open = !open;
+    body.classList.toggle('open', open);
+    toggle.textContent = open ? '▲ 閉じる' : '▼ 開く';
+  });
+
+  const CATEGORY_LABEL = { bombard: '🔴 砲撃テスト', melee: '⚔️ 近接戦闘テスト' };
+  let lastCat = null;
+
+  for (const s of TEST_SCENARIOS) {
+    if (s.category !== lastCat) {
+      const hdr = document.createElement('div');
+      hdr.className = 'tp-category';
+      hdr.textContent = CATEGORY_LABEL[s.category] || s.category;
+      body.appendChild(hdr);
+      lastCat = s.category;
+    }
+    const row = document.createElement('div');
+    row.className = 'tp-scenario';
+
+    const btn = document.createElement('button');
+    btn.className = 'tp-btn';
+    btn.textContent = s.id.toUpperCase();
+    btn.title = s.title;
+    btn.addEventListener('click', () => {
+      loadTestScenario(s.id);
+      addCombatLog(`シナリオ ${s.id}: ${s.title}`);
+    });
+
+    const desc = document.createElement('div');
+    desc.className = 'tp-desc';
+    desc.textContent = s.title;
+    desc.title = s.desc;
+
+    row.appendChild(btn);
+    row.appendChild(desc);
+    body.appendChild(row);
+  }
+}
+
+// test-scenarios.js のロード後に初期化
+window.addEventListener('load', () => {
+  setTimeout(initTestPanel, 100);
 });
 </script>
 </body>

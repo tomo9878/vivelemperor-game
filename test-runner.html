@@ -3037,6 +3037,145 @@ test('④ 到着コープスはカップに追加される', () => {
 });
 
 // ============================================================
+// Detachment Activation
+// ============================================================
+section('Detachment Activation');
+
+const DET_HEXES_T = {
+  hougoumont_det:   '0409',
+  lahayesainte_det: '1007',
+  papelotte_det:    '1607',
+};
+
+// スタンドアロン Elan Test（固定ロール対応）
+function performElanTest_DT(unit, fixedRoll = null, fixedReroll = null) {
+  const er = unit.er ?? 4;
+  const roll = fixedRoll !== null ? fixedRoll : (Math.floor(Math.random()*6)+1);
+  if (er >= 6 && roll === 6) {
+    const reroll = fixedReroll !== null ? fixedReroll : (Math.floor(Math.random()*6)+1);
+    return { roll, reroll, success: reroll <= 3, er, testER: er };
+  }
+  return { roll, reroll: null, success: roll <= er, er, testER: er };
+}
+
+function applyHit_DT(unit) {
+  unit.hits = (unit.hits ?? 0) + 1;
+}
+function doRally_DT(unit) {
+  if ((unit.hits ?? 0) > 0) unit.hits = Math.max(0, unit.hits - 1);
+}
+
+// Hougoumont/La Haye Sainte ロジック（同期）
+function resolveHougoumontLike_DT(detId, fixedRoll = null) {
+  const det = units.find(u => u.id === detId);
+  const detAddr = DET_HEXES_T[detId];
+  const adjFrench = neighborAddrs(detAddr).flatMap(n =>
+    getUnitsAt(n).filter(u => u.army === 'french'));
+  if (adjFrench.length === 0) {
+    doRally_DT(det);
+    return { action: 'rally' };
+  }
+  const target = [...adjFrench].sort((a, b) => (b.sp??0) - (a.sp??0))[0];
+  const res = performElanTest_DT(target, fixedRoll);
+  if (!res.success) applyHit_DT(target);
+  return { action: 'elan', target, success: res.success };
+}
+
+// Papelotte ロジック（同期）
+function resolvePapelotte_DT() {
+  const det = units.find(u => u.id === 'papelotte_det');
+  const adjFrench = neighborAddrs('1607').flatMap(n =>
+    getUnitsAt(n).filter(u => u.army === 'french'));
+  if (adjFrench.length === 0) {
+    doRally_DT(det);
+    return { action: 'rally' };
+  }
+  return { action: 'noop' };
+}
+
+// ---- Hougoumont ----
+test('① Hougoumont: 隣接フランスなし → Det をRally', () => {
+  fullReset();
+  const det = mkUnit({ id:'hougoumont_det', col:4,row:9, army:'allied', isDetachment:true, hits:1 });
+  units.push(det);
+  const r = resolveHougoumontLike_DT('hougoumont_det');
+  expect(r.action, 'rally').toBe('rally');
+  expect(det.hits, 'hits reduced').toBe(0);
+});
+
+test('② Hougoumont: 隣接フランスあり Elan成功 → Hitなし', () => {
+  fullReset();
+  const det = mkUnit({ id:'hougoumont_det', col:4,row:9, army:'allied', isDetachment:true, hits:0 });
+  // 0409の隣接hexにフランス配置
+  const adjAddr = neighborAddrs('0409')[0];
+  const fc = parseInt(adjAddr.slice(0,2),10), fr = parseInt(adjAddr.slice(2),10);
+  const french = mkUnit({ id:'fr1', col:fc, row:fr, army:'french', sp:4, er:4 });
+  units.push(det, french);
+  const r = resolveHougoumontLike_DT('hougoumont_det', 3); // roll=3 ≤ ER=4 → 成功
+  expect(r.action, 'elan test').toBe('elan');
+  expect(r.success, 'success').toBeTrue();
+  expect(french.hits, 'no hit').toBe(0);
+});
+
+test('③ Hougoumont: 隣接フランスあり Elan失敗 → 1 Hit', () => {
+  fullReset();
+  const det = mkUnit({ id:'hougoumont_det', col:4,row:9, army:'allied', isDetachment:true, hits:0 });
+  const adjAddr = neighborAddrs('0409')[0];
+  const fc = parseInt(adjAddr.slice(0,2),10), fr = parseInt(adjAddr.slice(2),10);
+  const french = mkUnit({ id:'fr1', col:fc, row:fr, army:'french', sp:4, er:4 });
+  units.push(det, french);
+  const r = resolveHougoumontLike_DT('hougoumont_det', 5); // roll=5 > ER=4 → 失敗
+  expect(r.success, 'fail').toBeFalse();
+  expect(french.hits, '1 hit').toBe(1);
+});
+
+test('④ 複数隣接フランス → 最大SPを対象', () => {
+  fullReset();
+  const det = mkUnit({ id:'hougoumont_det', col:4,row:9, army:'allied', isDetachment:true, hits:0 });
+  const neighbors = neighborAddrs('0409');
+  const [a0, a1] = [neighbors[0], neighbors[1]];
+  const c0=parseInt(a0.slice(0,2),10), r0=parseInt(a0.slice(2),10);
+  const c1=parseInt(a1.slice(0,2),10), r1=parseInt(a1.slice(2),10);
+  const fr_low  = mkUnit({ id:'fr_low',  col:c0, row:r0, army:'french', sp:2, er:4 });
+  const fr_high = mkUnit({ id:'fr_high', col:c1, row:r1, army:'french', sp:5, er:4 });
+  units.push(det, fr_low, fr_high);
+  const r = resolveHougoumontLike_DT('hougoumont_det', 5); // 失敗で確認
+  expect(r.target.id, 'highest SP targeted').toBe('fr_high');
+});
+
+// ---- La Haye Sainte ----
+test('⑤ La Haye Sainte: 隣接フランスなし → Rally', () => {
+  fullReset();
+  const det = mkUnit({ id:'lahayesainte_det', col:10,row:7, army:'allied', isDetachment:true, hits:2 });
+  units.push(det);
+  const r = resolveHougoumontLike_DT('lahayesainte_det');
+  expect(r.action, 'rally').toBe('rally');
+  expect(det.hits, 'hits reduced').toBe(1);
+});
+
+// ---- Papelotte ----
+test('⑥ Papelotte: 隣接フランスなし → Rally', () => {
+  fullReset();
+  const det = mkUnit({ id:'papelotte_det', col:16,row:7, army:'allied', isDetachment:true, hits:1 });
+  units.push(det);
+  const r = resolvePapelotte_DT();
+  expect(r.action, 'rally').toBe('rally');
+  expect(det.hits, 'hits reduced').toBe(0);
+});
+
+test('⑦ Papelotte: 隣接フランスあり → 何もしない', () => {
+  fullReset();
+  const det = mkUnit({ id:'papelotte_det', col:16,row:7, army:'allied', isDetachment:true, hits:1 });
+  const adjAddr = neighborAddrs('1607')[0];
+  const fc=parseInt(adjAddr.slice(0,2),10), fr=parseInt(adjAddr.slice(2),10);
+  const french = mkUnit({ id:'fr1', col:fc, row:fr, army:'french', sp:4 });
+  units.push(det, french);
+  const r = resolvePapelotte_DT();
+  expect(r.action, 'noop').toBe('noop');
+  expect(det.hits, 'no rally').toBe(1);
+});
+
+// ============================================================
 // 結果サマリー
 // ============================================================
 const total = passCount + failCount;

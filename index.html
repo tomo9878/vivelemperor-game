@@ -3916,7 +3916,83 @@ function executeBlucherResult(key, onDone) {
   }
 }
 
-/** プロイセンコープスを展開（ユニット未実装のためログのみ） */
+// ============================================================
+// Detachment Activation
+// ============================================================
+
+const DETACHMENT_HEXES = {
+  hougoumont_det:   '0409',
+  lahayesainte_det: '1007',
+  papelotte_det:    '1607',
+};
+
+/**
+ * 「Detachments」マーカーが引かれたときに呼ぶ。
+ * 3箇所のDetachmentをそれぞれ処理し、onDone を呼ぶ。
+ */
+function resolveDetachmentActivation(onDone) {
+  setHudState('[Detachment] Activation処理中...');
+  addCombatLog('── Detachment Activation ──');
+
+  const detIds = ['hougoumont_det', 'lahayesainte_det', 'papelotte_det'];
+
+  const actions = detIds.map(detId => done => {
+    const det = units.find(u => u.id === detId);
+    if (!det) { done(); return; }
+
+    const detAddr = DETACHMENT_HEXES[detId];
+    const adjFrench = neighborAddrs(detAddr)
+      .flatMap(n => getUnitsAt(n).filter(u => u.army === 'french'));
+
+    if (detId === 'papelotte_det') {
+      // Papelotte: 隣接フランスなし → Rally、いれば待機
+      if (adjFrench.length === 0) {
+        addCombatLog(`[Papelotte] 隣接フランスなし → Rally`);
+        setAIHighlights(detAddr, detAddr);
+        doRally(det);
+        drawAllUnits();
+        setTimeout(() => { clearAIHighlights(); done(); }, 400);
+      } else {
+        addCombatLog(`[Papelotte] 隣接フランスあり（${adjFrench.map(u=>u.id).join('/')}）→ 待機`);
+        done();
+      }
+    } else {
+      // Hougoumont / La Haye Sainte
+      const label = detId === 'hougoumont_det' ? 'Hougoumont' : 'La Haye Sainte';
+      if (adjFrench.length === 0) {
+        addCombatLog(`[${label}] 隣接フランスなし → Rally`);
+        setAIHighlights(detAddr, detAddr);
+        doRally(det);
+        drawAllUnits();
+        setTimeout(() => { clearAIHighlights(); done(); }, 400);
+      } else {
+        // 最大SP（同数は先頭）
+        const target = [...adjFrench].sort(
+          (a, b) => getEffectiveSP(b) - getEffectiveSP(a)
+        )[0];
+        const tAddr = hexAddr(target.col, target.row);
+        addCombatLog(`[${label}] 最大SP隣接フランス: ${target.id}（実効SP=${getEffectiveSP(target)}）→ Elan Test`);
+        setAIHighlights(detAddr, tAddr);
+        const { roll, reroll, success, er, testER } = performElanTest(target);
+        const rollStr = reroll !== null ? `${roll}→再ロール:${reroll}` : `${roll}`;
+        addCombatLog(
+          `[${target.id}] Elan Test ER=${testER} ダイス:${rollStr} → ` +
+          (success ? '成功（ダメージなし）' : '失敗 → 1 Hit！')
+        );
+        if (!success) applyHit(target);
+        drawAllUnits();
+        setTimeout(() => { clearAIHighlights(); done(); }, 600);
+      }
+    }
+  });
+
+  executeActionsSequentially(actions, () => {
+    addCombatLog('── Detachment Activation 完了 ──');
+    setHudState('[Detachment] 完了');
+    onDone();
+  });
+}
+
 // ============================================================
 // プロイセン到着システム
 // ============================================================
@@ -4470,7 +4546,24 @@ function renderDrawnCard(el, m) {
       break;
     }
 
-    case 'allied':
+    case 'allied': {
+      if (m.id === 'aa-det') {
+        const btnDet = makeBtn('Detachment Activation', 'btn-danger', () => {
+          const onDone = () => { cps.resolveDrawn(); renderChitUI(cps.getState()); };
+          resolveDetachmentActivation(onDone);
+        });
+        actions.appendChild(btnDet);
+      } else {
+        const btnRoll = makeBtn('ロール＆アクティベート', 'btn-danger', () => {
+          const onDone = () => { cps.resolveDrawn(); renderChitUI(cps.getState()); };
+          openRollModal(m, ALLIED_PRUSSIAN_TABLE, onDone, '',
+            (key, done) => runAlliedPrussianAI(m, key, done));
+        });
+        actions.appendChild(btnRoll);
+      }
+      break;
+    }
+
     case 'prussian': {
       const btnRoll = makeBtn('ロール＆アクティベート', 'btn-danger', () => {
         const onDone = () => { cps.resolveDrawn(); renderChitUI(cps.getState()); };

@@ -2902,7 +2902,7 @@ test('③ フランスが entry hex に → Delayed Entry', () => {
   const log = deployCorpsSync_T('pr-IV');
   expect(pr.offMap, 'deployed via delayed entry').toBeFalse();
   // 配置先は entry hex ではない
-  expect(hexAddr(pr.col, pr.row), 'not at entry hex').not.toBe('2011');
+  expect(hexAddr(pr.col, pr.row) !== '2011', 'not at entry hex').toBeTrue();
 });
 
 test('④ entry hex から目標方向へ移動している', () => {
@@ -2966,7 +2966,7 @@ test('③ フランスが entry hex に → Delayed Entry hex に配置', () => 
   const log = handleOffMapEntrySync_T('pr-II');
   expect(pr.offMap, 'deployed despite French').toBeFalse();
   expect(log.some(l => l.includes('delayed')), 'delayed entry used').toBeTrue();
-  expect(hexAddr(pr.col, pr.row), 'not entry hex').not.toBe('2009');
+  expect(hexAddr(pr.col, pr.row) !== '2009', 'not entry hex').toBeTrue();
 });
 
 // ============================================================

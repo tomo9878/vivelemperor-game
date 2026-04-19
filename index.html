@@ -3738,16 +3738,23 @@ function executeWellingtonResult(key, onDone) {
 function resolveBlucher(marker, onDone) {
   setHudState('[Blücher] Alte Vorwarts Table 処理中...');
 
-  // Step 1: TRTマーカー前進
+  // Step 1: TRTマーカー前進 → 到着コープスを順次展開してから Step2/3 へ
   const deployed = cps.advanceTRTMarkers();
-  for (const m of deployed) {
-    addCombatLog(`[Blücher] ${m.label}（${m.sub}）展開！`);
-    deployPrussianCorps(m);
-  }
   renderChitUI(cps.getState());
 
+  const deployActions = deployed.map(m => done => {
+    addCombatLog(`[Blücher] ${m.label}（${m.sub}）展開！`);
+    deployPrussianCorps(m, done);
+  });
+
+  executeActionsSequentially(deployActions, () => {
+    _resolveBlucherStep2(marker, onDone);
+  });
+}
+
+function _resolveBlucherStep2(marker, onDone) {
   // Step 2: Auto Rally（最多Hit、同数ならER最高）
-  const prussianHit = units.filter(u => u.army === 'prussian' && (u.hits ?? 0) > 0);
+  const prussianHit = units.filter(u => u.army === 'prussian' && !u.offMap && (u.hits ?? 0) > 0);
   if (prussianHit.length > 0) {
     const target = prussianHit.sort((a, b) => {
       if ((b.hits || 0) !== (a.hits || 0)) return (b.hits || 0) - (a.hits || 0);
@@ -3770,7 +3777,7 @@ function resolveBlucher(marker, onDone) {
 }
 
 function executeBlucherResult(key, onDone) {
-  const prussianUnits = units.filter(u => u.army === 'prussian');
+  const prussianUnits = units.filter(u => u.army === 'prussian' && !u.offMap);
 
   switch (key) {
     case 'revenge': {
@@ -3958,11 +3965,12 @@ function placePrussianUnit(unit, addr) {
  * - offMap ユニットを entry hex に配置し MA 分目標へ移動
  * - entry hex が満杯なら col=20 上の代替 hex へ
  */
-function deployPrussianCorps(marker) {
+function deployPrussianCorps(marker, onDone = null) {
   prussianDeployed = true;
   const cfg = PRUSSIAN_CORPS_CONFIG[marker.id];
   if (!cfg) {
     addCombatLog(`[展開] ${marker.label} 設定なし`);
+    onDone?.();
     return;
   }
   addCombatLog(`📯 ${cfg.label} arrives at ${cfg.entryAddr}!`);
@@ -3970,7 +3978,11 @@ function deployPrussianCorps(marker) {
 
   const offMap = getOffMapUnits(marker.id)
     .sort((a, b) => deploymentOrder(a) - deploymentOrder(b));
-  if (offMap.length === 0) { drawAllUnits(); renderOffMapPanel(); return; }
+  if (offMap.length === 0) {
+    drawAllUnits(); renderOffMapPanel();
+    onDone?.();
+    return;
+  }
 
   const actions = offMap.map(u => done => {
     let landAddr = cfg.entryAddr;
@@ -3999,6 +4011,7 @@ function deployPrussianCorps(marker) {
     drawAllUnits();
     renderOffMapPanel();
     renderChitUI(cps.getState());
+    onDone?.();
   });
 }
 
@@ -4629,9 +4642,10 @@ elBtnEndTurn.addEventListener('click', () => {
   drawAllUnits();
   const r = cps.endTurn();
   renderChitUI(cps.getState());
-  // TRTで到着したプロイセンコープスを展開
+  // TRTで到着したプロイセンコープスを順次展開
   if (r.arrivedCorps && r.arrivedCorps.length > 0) {
-    r.arrivedCorps.forEach(m => deployPrussianCorps(m));
+    const deploySeq = r.arrivedCorps.map(m => done => deployPrussianCorps(m, done));
+    executeActionsSequentially(deploySeq, () => {});
   }
   if (r.gameOver) {
     setTimeout(() => alert('ゲーム終了！VP計算を行ってください。'), 100);

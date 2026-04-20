@@ -467,7 +467,7 @@ function createHexGrid(svgEl, layout, opts = {}) {
 
   for (let cl = 1; cl <= cols; cl++) {
     for (let rl = 1; rl <= rows; rl++) {
-      const col = cl - 1, row = rl - 1;   // 0-indexed → layout に渡す
+      const col = cl, row = rl;
       const label = labelFn(cl, rl);
 
       // ---- ポリゴン ----

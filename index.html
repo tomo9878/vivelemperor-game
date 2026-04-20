@@ -670,8 +670,8 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 // ============================================================
 const GRID_DX   = 109.2;   // 列間隔(px)
 const GRID_DY   = 125.3;   // 行間隔(px)
-const GRID_X0   = -3;      // 原点X（col_idx=0の中心）
-const GRID_Y0   = -15;     // 原点Y（col_idx=0,row_idx=0の中心）
+const GRID_X0   = -2;      // 原点X（col_idx=0の中心）
+const GRID_Y0   = -14;     // 原点Y（col_idx=0,row_idx=0の中心）
 const GRID_COLS = 20;      // 総列数（ラベル1〜20）
 const GRID_ROWS = 16;      // 総行数（ラベル1〜16）
 
@@ -679,7 +679,7 @@ const layout = new FlatTopLayout({
   dx: GRID_DX, dy: GRID_DY, x0: GRID_X0, y0: GRID_Y0,
 });
 
-// ラベル(1-indexed) ↔ 内部インデックス(0-indexed) 変換
+// ラベル ↔ インデックス（1-indexed で統一）
 const toIdx  = (label) => label;
 const toLabel = (idx)  => idx;
 
@@ -777,7 +777,7 @@ function setupTerrainLayer() {
     for (let rl = 1; rl <= GRID_ROWS; rl++) {
       const addr = hexAddr(cl, rl);
       const poly = makeSVGEl('polygon', {
-        points: layout.cornersToSVG(cl - 1, rl - 1),
+        points: layout.cornersToSVG(cl, rl),
         fill: 'none', stroke: 'none',
         'pointer-events': 'none',
       });

@@ -243,7 +243,7 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 
 /* ---- Terrain Toolbar ---- */
 #terrain-toolbar {
-  position: fixed; top: 172px; left: 12px; z-index: 20;
+  position: fixed; top: 12px; left: 240px; z-index: 20;
   background: rgba(0,0,0,.75); border: 1px solid #444;
   border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #aaa;
   min-width: 160px;
@@ -670,8 +670,8 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 // ============================================================
 const GRID_DX   = 109.2;   // 列間隔(px)
 const GRID_DY   = 125.3;   // 行間隔(px)
-const GRID_X0   = -2;      // 原点X（col_idx=0の中心）
-const GRID_Y0   = -14;     // 原点Y（col_idx=0,row_idx=0の中心）
+const GRID_X0   = -3;      // 原点X（col_idx=0の中心）
+const GRID_Y0   = -15;     // 原点Y（col_idx=0,row_idx=0の中心）
 const GRID_COLS = 20;      // 総列数（ラベル1〜20）
 const GRID_ROWS = 16;      // 総行数（ラベル1〜16）
 
@@ -680,8 +680,8 @@ const layout = new FlatTopLayout({
 });
 
 // ラベル(1-indexed) ↔ 内部インデックス(0-indexed) 変換
-const toIdx  = (label) => label - 1;
-const toLabel = (idx)  => idx + 1;
+const toIdx  = (label) => label;
+const toLabel = (idx)  => idx;
 
 // ヘックスアドレス文字列 "CCRRR" ex: "0409"
 function hexAddr(colLabel, rowLabel) {

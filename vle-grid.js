@@ -121,6 +121,7 @@ function exportTerrainJSON() {
     terrain: obj,
     rivers:  riverHexsides,
     bridges: bridgeHexsides,
+    roads:   roadHexsides,
   }, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -143,7 +144,9 @@ function importTerrainJSON(text) {
     }
     if (Array.isArray(data.rivers))  riverHexsides  = data.rivers.filter(r => r.from && r.to);
     if (Array.isArray(data.bridges)) bridgeHexsides = data.bridges.filter(r => r.from && r.to);
+    if (Array.isArray(data.roads))   roadHexsides   = data.roads.filter(r => r.from && r.to);
     renderRiverLayer();
+    renderRoadLayer();
     return true;
   } catch (err) {
     alert('JSON読み込みエラー: ' + err.message);
@@ -156,7 +159,7 @@ function importTerrainJSON(text) {
 // ============================================================
 let riverHexsides  = [];
 let bridgeHexsides = [];
-const roadHexes = new Set();
+let roadHexsides   = [];
 
 // ============================================================
 // プロイセン展開フラグ（19xx/20xx制限）

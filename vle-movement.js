@@ -27,7 +27,54 @@ function isRiverCrossing(fromAddr, toAddr) {
 }
 
 function isOnRoad(fromAddr, toAddr) {
-  return roadHexes.has(fromAddr) && roadHexes.has(toAddr);
+  const key = riverKey(fromAddr, toAddr);
+  return roadHexsides.some(r => riverKey(r.from, r.to) === key);
+}
+
+function isRoadHex(addr) {
+  return roadHexsides.some(r => r.from === addr || r.to === addr);
+}
+
+function toggleRoadHexside(a, b) {
+  const key = riverKey(a, b);
+  const idx = roadHexsides.findIndex(r => riverKey(r.from, r.to) === key);
+  if (idx >= 0) {
+    roadHexsides.splice(idx, 1);
+  } else {
+    const [f, t] = a < b ? [a, b] : [b, a];
+    roadHexsides.push({ from: f, to: t });
+  }
+  renderRoadLayer();
+}
+
+function renderRoadLayer() {
+  if (!roadLayerEl) return;
+  for (const c of [...roadLayerEl.children]) {
+    if (c !== roadHoverEl) c.remove();
+  }
+  for (const r of roadHexsides) {
+    const corners = getHexsideCorners(r.from, r.to);
+    if (!corners) continue;
+    const line = makeSVGEl('line', {
+      x1: corners[0].x, y1: corners[0].y,
+      x2: corners[1].x, y2: corners[1].y,
+      class: 'road-line',
+    });
+    roadLayerEl.insertBefore(line, roadHoverEl);
+  }
+}
+
+function setRoadHoverLine(corners) {
+  if (!roadHoverEl) return;
+  if (corners) {
+    roadHoverEl.setAttribute('x1', corners[0].x);
+    roadHoverEl.setAttribute('y1', corners[0].y);
+    roadHoverEl.setAttribute('x2', corners[1].x);
+    roadHoverEl.setAttribute('y2', corners[1].y);
+    roadHoverEl.style.display = '';
+  } else {
+    roadHoverEl.style.display = 'none';
+  }
 }
 
 function toggleRiverHexside(a, b) {

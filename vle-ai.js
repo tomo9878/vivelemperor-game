@@ -293,8 +293,8 @@ function applyHexPriority(candidates, unit, fromAddr) {
     const bE = !isEnemyAdjacentTo(b, unit.army) ? 1 : 0;
     if (aE !== bE) return bE - aE;
     // 2. 道路ヘックス優先
-    const aRd = roadHexes.has(a) ? 1 : 0;
-    const bRd = roadHexes.has(b) ? 1 : 0;
+    const aRd = isRoadHex(a) ? 1 : 0;
+    const bRd = isRoadHex(b) ? 1 : 0;
     if (aRd !== bRd) return bRd - aRd;
     // 3. Elevation変化なし優先（flat↔ridgeを避ける）
     const aSE = isRidge(a) === isRidge(fromAddr) ? 1 : 0;

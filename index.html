@@ -275,6 +275,9 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
 .river-line    { stroke: #4499ff; stroke-width: 4; stroke-linecap: round; pointer-events: none; opacity: 0.85; }
 .river-bridge  { stroke: #44ddff; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 3; pointer-events: none; opacity: 0.85; }
 .river-hover   { stroke: #88ccff; stroke-width: 5; stroke-linecap: round; pointer-events: none; opacity: 0.65; stroke-dasharray: 8 4; }
+.btn-road-on   { background: #2a1e00; border-color: #c8a040; color: #c8a040; }
+.road-line     { stroke: #c8a040; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; opacity: 0.75; }
+.road-hover    { stroke: #e0c070; stroke-width: 5; stroke-linecap: round; pointer-events: none; opacity: 0.65; stroke-dasharray: 8 4; }
 
 /* ---- Bombard highlight ---- */
 .hex-bombard { fill: rgba(255,50,50,0.22); stroke: #ff3333; stroke-width: 2.5; opacity: 1; }
@@ -454,6 +457,19 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
       JSON 読込
       <input type="file" id="terrain-import-input" accept=".json" style="display:none">
     </label>
+  </div>
+  <hr style="border:none;border-top:1px solid #333;margin:6px 0">
+  <button id="btn-road-toggle" class="btn btn-neutral" style="width:100%">道路設定 OFF</button>
+  <div id="road-edit-panel" style="display:none;margin-top:6px">
+    <div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">道路区間（ヘックス辺）</div>
+    <div id="road-hex-label" style="font-size:11px;color:#c8a040;margin-bottom:4px">— 辺未選択 —</div>
+    <div style="font-size:10px;color:#666">ヘックス境界線に近づけてクリックでトグル</div>
+    <div style="display:flex;gap:4px;margin-top:6px">
+      <button id="btn-road-export" class="btn btn-neutral" style="flex:1;font-size:10px">JSON保存</button>
+      <label class="btn btn-neutral" style="flex:1;font-size:10px;cursor:pointer;text-align:center">
+        JSON読込<input type="file" id="road-import-input" accept=".json" style="display:none">
+      </label>
+    </div>
   </div>
   <hr style="border:none;border-top:1px solid #333;margin:6px 0">
   <button id="btn-river-toggle" class="btn btn-neutral" style="width:100%">河川設定 OFF</button>
@@ -675,17 +691,17 @@ body { background: #1a1a2e; overflow: hidden; font-family: monospace; color: #ee
   </div>
 </div>
 
-<script src="hex-lib.js"></script>
-<script src="chit-pull.js"></script>
-<script src="vle-terrain-data.js"></script>
-<script src="vle-grid.js"></script>
-<script src="vle-units.js"></script>
-<script src="vle-movement.js"></script>
-<script src="vle-combat.js"></script>
-<script src="vle-ai.js"></script>
-<script src="vle-commanders.js"></script>
-<script src="vle-ui.js"></script>
-<script src="vle-game.js"></script>
+<script src="hex-lib.js?v=road1"></script>
+<script src="chit-pull.js?v=road1"></script>
+<script src="vle-terrain-data.js?v=road1"></script>
+<script src="vle-grid.js?v=road1"></script>
+<script src="vle-units.js?v=road1"></script>
+<script src="vle-movement.js?v=road1"></script>
+<script src="vle-combat.js?v=road1"></script>
+<script src="vle-ai.js?v=road1"></script>
+<script src="vle-commanders.js?v=road1"></script>
+<script src="vle-ui.js?v=road1"></script>
+<script src="vle-game.js?v=road1"></script>
 <script src="test-scenarios.js" defer></script>
 <script>
 // ============================================================

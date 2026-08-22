@@ -52,6 +52,11 @@
 - `isRiverCrossing(a, b)` — 橋なし河川越えをブロック
 - SVG河川レイヤー（青実線）、橋設定UI（青破線）
 
+### 道路ヘックスサイド
+- 河川と同じ「ヘックス辺」単位のデータ構造（`roadHexsides`：`{from, to}` 配列）
+- 道路編集UI（ヘックス境界線近くをクリックしてトグル、JSON保存/読込）
+- `isOnRoad(a, b)` — 指定した辺が道路か判定（難地形停止免除・登り坂コスト軽減に使用）
+
 ### 移動ロジック
 - `getMA(type)` — infantry/artillery=2、HC=3、LC=4
 - `computeReachable(unit)` — BFSで到達可能ヘックスを計算
@@ -147,7 +152,6 @@ const moveCost = (isUphill(addr, nAddr) && !onRoad) ? 2 : 1;
 | 項目 | 備考 |
 |------|------|
 | Forced March | +1ヘックス、Elan Test失敗で1Hit |
-| 道路データ入力UI | `roadHexes` Set が空のまま |
 | 後退処理（Retreat） | 敗者の2ヘックス後退、方向別ルール |
 | Rally処理 | マーカー1段階回復 |
 | Panic Test自動判定 | 3rd Hit時のElan Test |

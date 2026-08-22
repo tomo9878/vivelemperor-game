@@ -8,6 +8,8 @@ let hexEls = new Map();
 let unitsLayerEl    = null;
 let riverLayerEl    = null;
 let riverHoverEl    = null;
+let roadLayerEl     = null;
+let roadHoverEl     = null;
 let vpControlLayerEl = null;
 
 function setupSVG(W, H) {
@@ -24,6 +26,12 @@ function setupSVG(W, H) {
     labelClass: 'hex-label',
     groupId:    'hex-grid',
   });
+
+  roadLayerEl = makeSVGEl('g', { id: 'road-layer' });
+  roadHoverEl = makeSVGEl('line', { class: 'road-hover' });
+  roadHoverEl.style.display = 'none';
+  roadLayerEl.appendChild(roadHoverEl);
+  svg.appendChild(roadLayerEl);
 
   riverLayerEl = makeSVGEl('g', { id: 'river-layer' });
   riverHoverEl = makeSVGEl('line', { class: 'river-hover' });
@@ -42,6 +50,7 @@ function setupSVG(W, H) {
   svg.addEventListener('mouseleave', () => {
     document.getElementById('hud-hover').textContent = '—';
     setRiverHoverLine(null);
+    setRoadHoverLine(null);
   });
 }
 
@@ -82,6 +91,23 @@ function onMouseMove(e) {
         `${hs.addrA} ↔ ${hs.addrB}`;
     } else {
       setRiverHoverLine(null);
+      document.getElementById('hud-hover').textContent = '—';
+    }
+    return;
+  }
+
+  if (roadEditMode) {
+    const { x, y } = viewportToMap(e.clientX, e.clientY);
+    const hs = getNearestHexside(x, y);
+    if (hs) {
+      setRoadHoverLine(hs.corners);
+      const isRoad = isOnRoad(hs.addrA, hs.addrB);
+      document.getElementById('hud-hover').textContent =
+        `${hs.addrA}|${hs.addrB} [${isRoad ? '道路' : '−'}]`;
+      document.getElementById('road-hex-label').textContent =
+        `${hs.addrA} ↔ ${hs.addrB}`;
+    } else {
+      setRoadHoverLine(null);
       document.getElementById('hud-hover').textContent = '—';
     }
     return;
@@ -143,6 +169,18 @@ function onMouseClick(e) {
   if (napoleonMode) {
     const h = getHexAt(e.clientX, e.clientY);
     if (h) handleNapoleonModeClick(h);
+    return;
+  }
+
+  if (roadEditMode) {
+    const { x, y } = viewportToMap(e.clientX, e.clientY);
+    const hs = getNearestHexside(x, y);
+    if (hs) {
+      toggleRoadHexside(hs.addrA, hs.addrB);
+      const isRoad = isOnRoad(hs.addrA, hs.addrB);
+      document.getElementById('road-hex-label').textContent =
+        `${hs.addrA} ↔ ${hs.addrB} [${isRoad ? '道路追加' : '削除'}]`;
+    }
     return;
   }
 
@@ -496,6 +534,51 @@ window.addEventListener('keydown', e => {
 // ============================================================
 // 地形編集 UI
 // ============================================================
+// ============================================================
+// 道路編集 UI
+// ============================================================
+
+let roadEditMode = false;
+
+function setRoadEditMode(on) {
+  roadEditMode = on;
+  const btn   = document.getElementById('btn-road-toggle');
+  const panel = document.getElementById('road-edit-panel');
+  if (on) {
+    btn.textContent = '道路設定 ON';
+    btn.classList.replace('btn-neutral', 'btn-road-on');
+    panel.style.display = 'block';
+    svg.style.cursor = 'crosshair';
+    if (selectedUnitId !== null) deselect();
+  } else {
+    btn.textContent = '道路設定 OFF';
+    btn.classList.replace('btn-road-on', 'btn-neutral');
+    panel.style.display = 'none';
+    setRoadHoverLine(null);
+    svg.style.cursor = '';
+    document.getElementById('hud-hover').textContent = '—';
+  }
+}
+
+function exportRoadJSON() {
+  const blob = new Blob([JSON.stringify(roadHexsides, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'vle-roads.json';
+  a.click();
+}
+
+function importRoadJSON(jsonStr) {
+  try {
+    const data = JSON.parse(jsonStr);
+    roadHexsides = data.filter(r => r.from && r.to);
+    renderRoadLayer();
+    document.getElementById('road-hex-label').textContent = `${roadHexsides.length} 区間読込済み`;
+  } catch {
+    alert('道路JSONの読み込みに失敗しました');
+  }
+}
+
 let terrainEditMode = false;
 let terrainEditAddr = null;
 
@@ -529,6 +612,31 @@ function setRiverEditMode(on) {
   }
 }
 
+document.getElementById('btn-road-toggle').addEventListener('click', () => {
+  if (!roadEditMode) {
+    if (terrainEditMode) {
+      terrainEditMode = false;
+      document.getElementById('btn-terrain-toggle').textContent = '地形設定 OFF';
+      document.getElementById('btn-terrain-toggle').classList.replace('btn-terrain-on', 'btn-neutral');
+      document.getElementById('terrain-edit-panel').style.display = 'none';
+      terrainEditAddr = null;
+    }
+    if (riverEditMode) setRiverEditMode(false);
+  }
+  setRoadEditMode(!roadEditMode);
+});
+
+document.getElementById('btn-road-export').addEventListener('click', exportRoadJSON);
+
+document.getElementById('road-import-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => importRoadJSON(ev.target.result);
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
 document.getElementById('btn-river-toggle').addEventListener('click', () => {
   if (!riverEditMode && terrainEditMode) {
     terrainEditMode = false;
@@ -537,6 +645,7 @@ document.getElementById('btn-river-toggle').addEventListener('click', () => {
     document.getElementById('terrain-edit-panel').style.display = 'none';
     terrainEditAddr = null;
   }
+  if (!riverEditMode && roadEditMode) setRoadEditMode(false);
   setRiverEditMode(!riverEditMode);
 });
 
@@ -546,6 +655,7 @@ document.getElementById('btn-terrain-toggle').addEventListener('click', () => {
   const panel = document.getElementById('terrain-edit-panel');
   if (terrainEditMode) {
     if (riverEditMode) setRiverEditMode(false);
+    if (roadEditMode)  setRoadEditMode(false);
     btn.textContent = '地形設定 ON';
     btn.classList.replace('btn-neutral', 'btn-terrain-on');
     panel.style.display = 'block';

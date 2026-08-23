@@ -17,7 +17,11 @@ function isRiverHexside(a, b) {
   return riverHexsides.some(r => riverKey(r.from, r.to) === key);
 }
 
+// 橋は「道路が河川ヘックスサイドと交差する地点」として自動判定する
+// （ルール上、道路（橋）以外での河川越えは不可＝橋は道路とセット）。
+// bridgeHexsides は手動指定の追加分（道路データにない橋がある場合の保険）。
 function isBridgeHexside(a, b) {
+  if (isOnRoad(a, b)) return true;
   const key = riverKey(a, b);
   return bridgeHexsides.some(r => riverKey(r.from, r.to) === key);
 }

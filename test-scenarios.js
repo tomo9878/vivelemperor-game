@@ -634,10 +634,13 @@ window.TEST_SCENARIOS = TEST_SCENARIOS;
 window.loadTestScenario = function(id) {
   const scenario = TEST_SCENARIOS.find(s => s.id === id);
   if (!scenario) { console.warn('Scenario not found:', id); return; }
-  // 河川リセット（全削除）
+  // 河川・道路リセット（全削除。道路は河川と交差すると自動で橋扱いになるため、
+  // 実マップの道路データが紛れ込まないようテストシナリオ側では常に空にする）
   riverHexsides.length = 0;
   bridgeHexsides.length = 0;
+  roadHexsides.length = 0;
   renderRiverLayer();
+  renderRoadLayer();
   // テスト地形をリセット（全ヘックスをFlatに）
   for (const addr of terrainFillEls.keys()) clearTestTerrain(addr);
   // シナリオのsetupを実行

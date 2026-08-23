@@ -275,6 +275,14 @@ function getRetreatScoreFn(army) {
   };
 }
 
+// 後退はルール上の指定方向（仏=南／連合=北・北西／プロ=北・北東）へのみ許される。
+// 敵側へ向かう方向しか空いていない場合は「後退不能」として扱う。
+function isRetreatDirectionOK(army, fromAddr, toAddr) {
+  const dr = parseInt(toAddr.slice(2), 10) - parseInt(fromAddr.slice(2), 10);
+  if (army === 'french') return dr >= 0;
+  return dr <= 0; // allied / prussian
+}
+
 function doRetreat(unit, hexCount) {
   const logs = [];
   const scoreFn = getRetreatScoreFn(unit.army);
@@ -287,6 +295,7 @@ function doRetreat(unit, hexCount) {
       if (visited.has(nAddr)) return false;
       if (getUnitsAt(nAddr).some(u => u.army !== unit.army)) return false;
       if (!canLandAt(nAddr, unit)) return false;
+      if (!isRetreatDirectionOK(unit.army, currentAddr, nAddr)) return false;
       return true;
     });
     valid.sort((a, b) => scoreFn(currentAddr, b) - scoreFn(currentAddr, a));

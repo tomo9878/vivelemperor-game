@@ -299,6 +299,7 @@ function doForcedRetreatOrEliminate(unit, hexCount) {
       if (visited.has(nAddr)) return false;
       if (getUnitsAt(nAddr).some(u => u.army !== unit.army)) return false;
       if (!canLandAt(nAddr, unit)) return false;
+      if (!isRetreatDirectionOK(unit.army, currentAddr, nAddr)) return false;
       return true;
     });
     valid.sort((a, b) => scoreFn(currentAddr, b) - scoreFn(currentAddr, a));

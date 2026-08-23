@@ -141,8 +141,9 @@
 
 | 項目 | 備考 |
 |------|------|
+| 橋編集UI | `bridgeHexsides` を設定するUIが無く、常に空 → 河川を渡る手段がマップ上どこにもない状態 |
 | Forced March | +1ヘックス、Elan Test失敗で1Hit |
 | Combined Fire | 複数ユニット合算砲撃 |
 | Fresh/Battleworn裏面画像 | 裏返し時の画像切り替え |
-| VP計算最終表示 | ゲーム終了時の勝利判定UI |
-| 橋データ入力 | bridges リストが空のまま |
+
+（VP計算最終表示は実装済み — `endGame()`/`showEndGameModal()`、ターン12終了時に自動発火）

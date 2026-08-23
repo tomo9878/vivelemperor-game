@@ -693,6 +693,28 @@ document.getElementById('btn-rainy-roll').addEventListener('click', rollRainySta
 document.getElementById('btn-deploy-complete').addEventListener('click', startBattlePhase);
 
 // ============================================================
+// テスト用: フランス軍自動配置してすぐ開始
+// ============================================================
+
+function autoDeployAndStart() {
+  startDeploymentPhase();
+  for (const unit of getFrenchDeployUnits()) {
+    if (!unit.offMap) continue;
+    const zone = getDeploymentZone(unit);
+    const hexes = [...computeDeployableHexes(unit)]
+      .sort((a, b) => hexDistance(a, zone.center) - hexDistance(b, zone.center));
+    if (hexes.length === 0) {
+      console.warn(`[autoDeploy] ${unit.id}: 配置可能ヘックスなし`);
+      continue;
+    }
+    deployUnit(unit, hexes[0]);
+  }
+  startBattlePhase();
+}
+
+document.getElementById('btn-test-autostart').addEventListener('click', autoDeployAndStart);
+
+// ============================================================
 // セーブ・ロード
 // ============================================================
 

@@ -278,7 +278,58 @@ function runPanicTest(unit) {
   }
 }
 
+function eliminateUnit(unit) {
+  unit.eliminated = true;
+  unit.offMap = true;
+  addCombatLog(`[${unit.id}] 消滅！`);
+  drawAllUnits();
+}
+
+// 6th Hit+ 専用の後退処理。通常の doRetreat と異なり、後退不能時は
+// その場でHitを積む代わりにユニットが消滅する（ルール上の明記通り）。
+function doForcedRetreatOrEliminate(unit, hexCount) {
+  const logs = [];
+  const scoreFn = getRetreatScoreFn(unit.army);
+  let currentAddr = hexAddr(unit.col, unit.row);
+  const visited = new Set([currentAddr]);
+
+  for (let step = 0; step < hexCount; step++) {
+    const neighbors = neighborAddrs(currentAddr);
+    const valid = neighbors.filter(nAddr => {
+      if (visited.has(nAddr)) return false;
+      if (getUnitsAt(nAddr).some(u => u.army !== unit.army)) return false;
+      if (!canLandAt(nAddr, unit)) return false;
+      return true;
+    });
+    valid.sort((a, b) => scoreFn(currentAddr, b) - scoreFn(currentAddr, a));
+
+    if (valid.length === 0) {
+      eliminateUnit(unit);
+      logs.push(`[${unit.id}] 後退不能 → 消滅`);
+      return logs;
+    }
+
+    currentAddr = valid[0];
+    visited.add(currentAddr);
+    unit.col = parseInt(currentAddr.slice(0, 2), 10);
+    unit.row = parseInt(currentAddr.slice(2), 10);
+    logs.push(`[${unit.id}] → ${currentAddr} に後退`);
+
+    const occupants = getUnitsAt(currentAddr).filter(u => u.id !== unit.id);
+    const hasFriendly = occupants.some(u => u.army === unit.army);
+    if (!hasFriendly && isEnemyAdjacentTo(currentAddr, unit.army)) {
+      applyHit(unit);
+      logs.push(`[${unit.id}] 敵隣接通過 → 1 Hit`);
+    }
+  }
+
+  drawAllUnits();
+  return logs;
+}
+
 function applyHit(unit) {
+  if (unit.eliminated) return;
+
   if (!unit.battleworn) {
     unit.hits = (unit.hits ?? 0) + 1;
     if (unit.hits >= 3) {
@@ -294,7 +345,10 @@ function applyHit(unit) {
   } else {
     unit.hits = (unit.hits ?? 0) + 1;
     if (unit.hits >= 3) {
-      addCombatLog(`[${unit.id}] 2ヘックス後退！（後退不能なら消滅）`);
+      unit.hits = 0;
+      addCombatLog(`[${unit.id}] 6th Hit+ → 2ヘックス後退（後退不能なら消滅）`);
+      const msgs = doForcedRetreatOrEliminate(unit, 2);
+      msgs.forEach(m => addCombatLog(m));
     } else if (unit.hits === 2) {
       addCombatLog(`[${unit.id}] Disrupted（SP/AF/ER -1）`);
     } else {

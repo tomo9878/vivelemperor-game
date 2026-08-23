@@ -91,6 +91,13 @@
 - Form Square Test（Cavalry→Infantry時）
 - Blown Horses（Cavalry攻撃後1Hit）
 - 3Hit上限、敗者2ヘックス後退
+- Cavalry Withdrawal（Infantry攻撃時、フランスCavalryの事前後退）
+
+### 後退・Panic Test・Rally
+- `doRetreat(unit, hexCount)` — 後退方向優先度（仏=南／連合=北・北西／プロ=北・北東）、敵隣接通過1Hit、後退不能ヘックス数分Hit
+- `runPanicTest(unit)` — 3rd Hit（Battleworn転換）直後のElan Test、失敗で1ヘックス後退
+- `doForcedRetreatOrEliminate(unit, hexCount)` — 6th Hit+（Battleworn状態での3rd Hit）専用。2ヘックス後退、後退不能なら`eliminateUnit()`で消滅
+- `doRally(unit)` — マーカー1段階回復（Battleworn面への回復はなし）
 
 ### チットプルシステム
 - カップ管理（初期15枚）、Napoleon自動保持（最大2枚）、Humbugged（仏1枚保持）
@@ -120,6 +127,7 @@
 ### テスト
 - `test-runner.html` — スタンドアロンテストランナー
 - `test-scenarios.js` — BFS/LOS/戦闘/プロイセン到着/Detachmentなど多数
+- `autoDeployAndStart()`（テストプレイ用）— Rainy Start判定をスキップし、フランス軍を各コープス展開エリアへ自動配置してBattle Phaseへ直行。「🚀 テスト開始（フランス軍自動配置）」ボタンから実行
 
 ---
 
@@ -134,10 +142,6 @@
 | 項目 | 備考 |
 |------|------|
 | Forced March | +1ヘックス、Elan Test失敗で1Hit |
-| 後退処理（Retreat） | 敗者の2ヘックス後退、方向別ルール |
-| Rally処理 | マーカー1段階回復 |
-| Panic Test自動判定 | 3rd Hit時のElan Test |
-| Cavalry Withdrawal | Infantry攻撃時の事前後退 |
 | Combined Fire | 複数ユニット合算砲撃 |
 | Fresh/Battleworn裏面画像 | 裏返し時の画像切り替え |
 | VP計算最終表示 | ゲーム終了時の勝利判定UI |

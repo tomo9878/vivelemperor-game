@@ -835,14 +835,14 @@ function calcVP() {
   }
 
   for (const u of units) {
-    if (u.offMap) continue;
-
-    if (u.army === 'allied' && u.type === 'infantry' && !u.small
-        && isBritish(u) && !u.isDetachment
-        && (u.eliminated || (u.battleworn && u.hits >= 3))) {
+    if (u.eliminated
+        && u.army === 'allied' && u.type === 'infantry' && !u.small
+        && isBritish(u) && !u.isDetachment) {
       rows.push({ label: `${u.id} 消滅`, vp: 2, sign: 'pos' });
       total += 2;
     }
+
+    if (u.offMap) continue;
 
     if (u.isOG && u.battleworn) {
       rows.push({ label: `${u.id} (OG) BW`, vp: -3, sign: 'neg' });

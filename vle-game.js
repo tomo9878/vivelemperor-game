@@ -45,6 +45,7 @@ function takeFrenchActivationSnapshot() {
       hits: u.hits ?? 0,
       battleworn: !!u.battleworn,
       offMap: !!u.offMap,
+      eliminated: !!u.eliminated,
       acted: !!u.acted,
     })),
     activeCorps,
@@ -68,6 +69,7 @@ function restoreFrenchActivationSnapshot() {
     unit.hits      = saved.hits;
     unit.battleworn = saved.battleworn;
     unit.offMap    = saved.offMap;
+    unit.eliminated = !!saved.eliminated;
     unit.acted     = saved.acted;
   }
 
@@ -735,6 +737,7 @@ function saveGame() {
       hits: u.hits ?? 0,
       battleworn: !!u.battleworn,
       offMap: !!u.offMap,
+      eliminated: !!u.eliminated,
       acted: !!u.acted,
     })),
     chitPull: cps.getState(),
@@ -779,6 +782,7 @@ function loadGame() {
     unit.hits      = saved.hits;
     unit.battleworn = saved.battleworn;
     unit.offMap    = saved.offMap;
+    unit.eliminated = !!saved.eliminated;
     unit.acted     = saved.acted;
   }
 

@@ -294,6 +294,7 @@ function doForcedRetreatOrEliminate(unit, hexCount) {
   const visited = new Set([currentAddr]);
 
   for (let step = 0; step < hexCount; step++) {
+    if (unit.eliminated) break;
     const neighbors = neighborAddrs(currentAddr);
     const valid = neighbors.filter(nAddr => {
       if (visited.has(nAddr)) return false;
